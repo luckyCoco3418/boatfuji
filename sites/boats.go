@@ -16,26 +16,33 @@ import (
 	"../api"
 )
 
-var bsBaseURL = "https://www.boats.com/"
-var bsBaseDir = "harvest/www.boats.com/"
-var bsURLPattern = regexp.MustCompile(`^https://www\.boatsetter\.com/(users|boats)/(\w+)\??$`)
-var bsUserMap = map[string]int64{} // from id like "abcdefg" to UserID
-var bsBoatMap = map[string]int64{} // from id like "abcdefg" to BoatID
-
-// Start does nothing currently, but is needed to make main dependent on sites
-func Start() {
-}
-
 func init() {
+	boats := &Boats{}
+	boats.bsBaseURL = "https://www.boats.com/"
+	boats.bsBaseDir = "harvest/www.boats.com/"
+	boats.bsURLPattern = regexp.MustCompile(`^https://www\.boatsetter\.com/(users|boats)/(\w+)\??$`)
+	boats.bsBoatMap = map[string]int64{}
+
+	boats.nextDealID = 1
+
 	api.Sites[bsBaseURL] = &Boats{}
 }
-
-var boatsByFilters map[string][]string
 
 // Boats accesses https://www.boatsetter.com/
 type Boats struct {
 	StoreData bool
 	WriteSQL  bool
+
+	bsBaseURL    string
+	bsBaseDir    string
+	bsURLPattern *regexp.Regexp
+
+	// bsUserMap map[string]int64 // from id like "abcdefg" to UserID
+	bsBoatMap map[string]int64 // from id like "abcdefg" to BoatID
+
+	boatsByFilters map[string][]string
+
+	nextDealID int64
 }
 
 // Harvest gets data from the site
@@ -48,12 +55,12 @@ func (site *Boats) Harvest(url string) error {
 			return err
 		}
 	}
-	os.MkdirAll(bsBaseDir+"boat-rentals", 0755)
+	os.MkdirAll(bsBaseDir+"boats-for-sale", 0755)
 	os.MkdirAll(bsBaseDir+"boats", 0755)
-	os.MkdirAll(bsBaseDir+"users", 0755)
+	// os.MkdirAll(bsBaseDir+"users", 0755)
 	if url == "" {
 		// loop through users and boats folders
-		for _, dir := range []string{"boats", "users"} {
+		for _, dir := range []string{"boats" /*"users"*/} {
 			files, err := ioutil.ReadDir(bsBaseDir + dir)
 			if err != nil {
 				return err
@@ -78,14 +85,14 @@ func (site *Boats) Harvest(url string) error {
 	}
 	if url == bsBaseURL {
 		boatsByFilters = map[string][]string{}
-		for _, filter := range []string{"&boat_types=power", "&boat_types=sail", "&activity=fishing", "&activity=celebrating", "&activity=sailing", "&activity=watersports", "&activity=cruising", ""} {
+		for _, filter := range []string{"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered", "&activity=pwc"} {
 			// TEMP for page := 1; page < 99999; page++ {
 			for page := 1; page < 10; page++ {
-				boatsPage, err := getPage(bsBaseDir+"boat-rentals/"+strconv.Itoa(page)+filter+".htm", "https://www.boatsetter.com/boat-rentals?latLngNe=89.99%2C0&latLngSw=-90%2C-180&page="+strconv.Itoa(page)+filter)
+				boatsPage, err := getPage(bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+filter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+filter)
 				if err != nil {
 					return err
 				}
-				if boatsPage.Find1(nil, "//div/@data-total-search-results", "0", "0") == "0" {
+				if boatsPage.Find1(nil, "//strong/text(Boats Available)", "0", "0") == "0" {
 					break
 				}
 				bsBoatIDs := boatsPage.FindN(nil, "//div/@data-boat-public-id", 0, 99999, "", "")
@@ -127,50 +134,50 @@ func (site *Boats) harvestX(x, id string) (int64, error) {
 	return site.harvestBoat(id, 0, nil)
 }
 
-var bsAnalyticsPattern = regexp.MustCompile(`<script>\n +analytics\.identify\("[^"]+", \{"initial_page_route":"/(boat-rentals|boats/\w+)"\}\);\n</script>`)
-var bsAvgResponseTimePattern = regexp.MustCompile(`>\nAvg\. response time\n<span class='[^']*'>(?:N/A|(&[lg]t;) (\d+) (min|hour))`)
-var bsResponseRatePattern = regexp.MustCompile(`>\nResponse rate\n<div class='[^']*'>(?:N/A|(\d+)%)`)
-var bsBoatPassengersPattern = regexp.MustCompile(`^ *Up to (\d+) people$`)
-var bsBoatHorsepowerPattern = regexp.MustCompile(`^(\d+) hp$`)
-var bsBoatCityPattern = regexp.MustCompile(`^([^,]*), (\w{2})?$`)
-var bsBoatLocationPattern = regexp.MustCompile(`var evergage_boatLatitude = "([^"]+)";\n *var evergage_boatLongitude = "([^"]+)";`)
-var bsBoatPackagesPattern = regexp.MustCompile(`packages: (.*?),\n`)
+// var bsAnalyticsPattern = regexp.MustCompile(`<script>\n +analytics\.identify\("[^"]+", \{"initial_page_route":"/(boat-rentals|boats/\w+)"\}\);\n</script>`)
+// var bsAvgResponseTimePattern = regexp.MustCompile(`>\nAvg\. response time\n<span class='[^']*'>(?:N/A|(&[lg]t;) (\d+) (min|hour))`)
+// var bsResponseRatePattern = regexp.MustCompile(`>\nResponse rate\n<div class='[^']*'>(?:N/A|(\d+)%)`)
+// var bsBoatPassengersPattern = regexp.MustCompile(`^ *Up to (\d+) people$`)
+// var bsBoatHorsepowerPattern = regexp.MustCompile(`^(\d+) hp$`)
+// var bsBoatCityPattern = regexp.MustCompile(`^([^,]*), (\w{2})?$`)
+// var bsBoatLocationPattern = regexp.MustCompile(`var evergage_boatLatitude = "([^"]+)";\n *var evergage_boatLongitude = "([^"]+)";`)
+// var bsBoatPackagesPattern = regexp.MustCompile(`packages: (.*?),\n`)
 
-type bsPackage struct {
-	ID              int       `json:"id"`
-	PublicID        string    `json:"public_id"`
-	IsDefault       bool      `json:"is_default"`
-	Type            string    `json:"type" enum:"bareboat, captained"`
-	InstantBookable bool      `json:"instant_bookable"`
-	IsCharter       bool      `json:"is_charter"`
-	OwnerInsured    bool      `json:"owner_provides_insurance"`
-	Prices          []bsPrice `json:"prices"`
-}
+// type bsPackage struct {
+// 	ID              int       `json:"id"`
+// 	PublicID        string    `json:"public_id"`
+// 	IsDefault       bool      `json:"is_default"`
+// 	Type            string    `json:"type" enum:"bareboat, captained"`
+// 	InstantBookable bool      `json:"instant_bookable"`
+// 	IsCharter       bool      `json:"is_charter"`
+// 	OwnerInsured    bool      `json:"owner_provides_insurance"`
+// 	Prices          []bsPrice `json:"prices"`
+// }
 
-type bsPrice struct {
-	BoatPrice           string           `json:"boat_price"`
-	ServiceFee          string           `json:"service_fee"`
-	TowingFee           string           `json:"towing_fee"`
-	BoatingCreditsValue string           `json:"boating_credits_value"`
-	CouponValue         string           `json:"coupon_value"`
-	SalesTax            string           `json:"sales_tax"`
-	TotalPrice          string           `json:"total_price"`
-	SecurityDeposit     string           `json:"security_deposit"`
-	CalendarDays        int              `json:"calendar_days"`
-	RangeAvailable      bool             `json:"range_available"`
-	DatePriceAdjustment string           `json:"date_price_adjustment"`
-	CaptainPrice        string           `json:"captain_price"`
-	RegularPrice        string           `json:"regular_price"`
-	CaptainFee          string           `json:"captain_fee"`
-	Value               string           `json:"value"`
-	IsDefault           bool             `json:"is_default"`
-	Duration            string           `json:"duration" enum:"all_day, half_day"`
-	FuelPolicy          string           `json:"fuel_policy" enum:"owner_pays, renter_pays"`
-	SpecialPrices       []bsSpecialPrice `json:"special_prices"`
-}
+// type bsPrice struct {
+// 	BoatPrice           string           `json:"boat_price"`
+// 	ServiceFee          string           `json:"service_fee"`
+// 	TowingFee           string           `json:"towing_fee"`
+// 	BoatingCreditsValue string           `json:"boating_credits_value"`
+// 	CouponValue         string           `json:"coupon_value"`
+// 	SalesTax            string           `json:"sales_tax"`
+// 	TotalPrice          string           `json:"total_price"`
+// 	SecurityDeposit     string           `json:"security_deposit"`
+// 	CalendarDays        int              `json:"calendar_days"`
+// 	RangeAvailable      bool             `json:"range_available"`
+// 	DatePriceAdjustment string           `json:"date_price_adjustment"`
+// 	CaptainPrice        string           `json:"captain_price"`
+// 	RegularPrice        string           `json:"regular_price"`
+// 	CaptainFee          string           `json:"captain_fee"`
+// 	Value               string           `json:"value"`
+// 	IsDefault           bool             `json:"is_default"`
+// 	Duration            string           `json:"duration" enum:"all_day, half_day"`
+// 	FuelPolicy          string           `json:"fuel_policy" enum:"owner_pays, renter_pays"`
+// 	SpecialPrices       []bsSpecialPrice `json:"special_prices"`
+// }
 
-type bsSpecialPrice struct {
-}
+// type bsSpecialPrice struct {
+// }
 
 // harvestBoat will harvest the given boat (i.e., id=abcdefg), either from the harvest folder or from the website
 func (site *Boats) harvestBoat(bsBoatID string, userIDIfUnavailable int64, onlyGetUserInfo *api.User) (int64, error) {
@@ -423,12 +430,10 @@ func (site *Boats) harvestBoat(bsBoatID string, userIDIfUnavailable int64, onlyG
 	return boatID, nil
 }
 
-var bsAboardSincePattern = regexp.MustCompile(`^Aboard since (\d{4})$`)
-var bsUserCityPattern = regexp.MustCompile(`^From ([^,]*), (\w{2})?$`)
-var bsReviewCtPattern = regexp.MustCompile(`^\n(\d+) reviews?\n$`)
-var bsDatePattern = regexp.MustCompile(`^(\w{3})\. (\d\d)(st|nd|rd|th)$`)
-
-var nextDealID int64 = 1
+// var bsAboardSincePattern = regexp.MustCompile(`^Aboard since (\d{4})$`)
+// var bsUserCityPattern = regexp.MustCompile(`^From ([^,]*), (\w{2})?$`)
+// var bsReviewCtPattern = regexp.MustCompile(`^\n(\d+) reviews?\n$`)
+// var bsDatePattern = regexp.MustCompile(`^(\w{3})\. (\d\d)(st|nd|rd|th)$`)
 
 func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBoat *api.User) (int64, error) {
 	if userID, ok := bsUserMap[bsUserID]; ok {
@@ -632,13 +637,4 @@ func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBo
 	// save warnings
 	userPage.SaveWarnings(userFileWithoutExt + ".txt")
 	return userID, nil
-}
-
-// codeToInt64 converts a 5-7 character lowercase code like "bcdefgh" to a positive integer not more than 10 digits
-func codeToInt64(code string) int64 {
-	var result int64 = 0
-	for _, c := range code {
-		result = result*26 + int64(c-'a')
-	}
-	return result
 }

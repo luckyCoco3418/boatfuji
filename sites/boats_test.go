@@ -16,8 +16,8 @@ func TestBoats(t *testing.T) {
 	if site.WriteSQL {
 		startSQL()
 	}
-	err := site.Harvest("")
-	// err := site.Harvest("https://www.boats.com/")
+	// err := site.Harvest("")
+	err := site.Harvest("https://www.boats.com/")
 	// err := site.Harvest("https://www.boats.com/boats/ocean-alexander/45-divergence-coupe-7586270/")
 	if err != nil {
 		log.Printf(err.Error())

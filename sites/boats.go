@@ -18,14 +18,9 @@ import (
 
 func init() {
 	boats := &Boats{}
-	boats.bsBaseURL = "https://www.boats.com/"
-	boats.bsBaseDir = "harvest/www.boats.com/"
-	boats.bsURLPattern = regexp.MustCompile(`^https://www\.boatsetter\.com/(users|boats)/(\w+)\??$`)
-	boats.bsBoatMap = map[string]int64{}
+	boats.init()
 
-	boats.nextDealID = 1
-
-	api.Sites[bsBaseURL] = &Boats{}
+	api.Sites[boats.bsBaseURL] = boats
 }
 
 // Boats accesses https://www.boatsetter.com/
@@ -33,9 +28,10 @@ type Boats struct {
 	StoreData bool
 	WriteSQL  bool
 
-	bsBaseURL    string
-	bsBaseDir    string
-	bsURLPattern *regexp.Regexp
+	bsBaseURL          string
+	bsBaseDir          string
+	bsURLPattern       *regexp.Regexp
+	bsURL2ModelPattern *regexp.Regexp
 
 	// bsUserMap map[string]int64 // from id like "abcdefg" to UserID
 	bsBoatMap map[string]int64 // from id like "abcdefg" to BoatID
@@ -45,23 +41,34 @@ type Boats struct {
 	nextDealID int64
 }
 
+func (site *Boats) init() {
+	site.bsBaseURL = "https://www.boats.com/"
+	site.bsBaseDir = "harvest/www.boats.com/"
+	site.bsURLPattern = regexp.MustCompile(`^https://www\.boats\.com/(boats|power-boats|sailing-boats|unpowered)/.*-(\w+)\/$`)
+	site.bsURL2ModelPattern = regexp.MustCompile(`^https://www\.boats\.com/(boats)/(.*)/(.*)-\w+\/$`)
+	site.bsBoatMap = map[string]int64{}
+
+	site.nextDealID = 1
+}
+
 // Harvest gets data from the site
 func (site *Boats) Harvest(url string) error {
 	boatsByFilters = map[string][]string{}
-	filtersJSON, err := ioutil.ReadFile(bsBaseDir + "filters.json")
+	filtersJSON, err := ioutil.ReadFile(site.bsBaseDir + "filters.json")
 	if err == nil {
 		err = json.Unmarshal(filtersJSON, &boatsByFilters)
 		if err != nil {
 			return err
 		}
 	}
-	os.MkdirAll(bsBaseDir+"boats-for-sale", 0755)
-	os.MkdirAll(bsBaseDir+"boats", 0755)
-	// os.MkdirAll(bsBaseDir+"users", 0755)
+	os.MkdirAll(site.bsBaseDir+"boats-for-sale", 0755)
+	os.MkdirAll(site.bsBaseDir+"boats", 0755)
+	os.MkdirAll(site.bsBaseDir+"urls", 0755)
+	// os.MkdirAll(site.bsBaseDir+"users", 0755)
 	if url == "" {
 		// loop through users and boats folders
 		for _, dir := range []string{"boats" /*"users"*/} {
-			files, err := ioutil.ReadDir(bsBaseDir + dir)
+			files, err := ioutil.ReadDir(site.bsBaseDir + dir)
 			if err != nil {
 				return err
 			}
@@ -75,7 +82,7 @@ func (site *Boats) Harvest(url string) error {
 				var fileName = file.Name()
 				if strings.HasSuffix(fileName, ".htm") {
 					id := strings.Split(filepath.Base(fileName), ".")[0]
-					if _, err = site.harvestX(dir, id); err != nil {
+					if _, err = site.harvestX("", dir, id); err != nil {
 						return err
 					}
 				}
@@ -83,19 +90,19 @@ func (site *Boats) Harvest(url string) error {
 		}
 		return nil
 	}
-	if url == bsBaseURL {
+	if url == site.bsBaseURL {
 		boatsByFilters = map[string][]string{}
 		for _, filter := range []string{"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered", "&activity=pwc"} {
 			// TEMP for page := 1; page < 99999; page++ {
 			for page := 1; page < 10; page++ {
-				boatsPage, err := getPage(bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+filter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+filter)
+				boatsPage, err := getPage(site.bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+filter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+filter)
 				if err != nil {
 					return err
 				}
-				if boatsPage.Find1(nil, "//strong/text(Boats Available)", "0", "0") == "0" {
+				if boatsPage.Find1(nil, "//strong[ends-with(text(),'Boats Available')]", "0", "0") == "0" {
 					break
 				}
-				bsBoatIDs := boatsPage.FindN(nil, "//div/@data-boat-public-id", 0, 99999, "", "")
+				bsBoatIDs := boatsPage.FindN(nil, "//li/@data-reporting-impression-product-id", 0, 99999, "", "")
 				if filter != "" {
 					filtersKey := strings.Split(filter, "=")[1]
 					if page == 1 {
@@ -116,22 +123,19 @@ func (site *Boats) Harvest(url string) error {
 			}
 		}
 		filtersJSON, _ := json.Marshal(boatsByFilters)
-		ioutil.WriteFile(bsBaseDir+"filters.json", filtersJSON, 0644)
+		ioutil.WriteFile(site.bsBaseDir+"filters.json", filtersJSON, 0644)
 		return nil
 	}
-	match := bsURLPattern.FindStringSubmatch(url)
+	match := site.bsURLPattern.FindStringSubmatch(url)
 	if match == nil {
 		return errors.New("BadURL")
 	}
-	_, err = site.harvestX(match[1], match[2])
+	_, err = site.harvestX(url, match[1], match[2])
 	return err
 }
 
-func (site *Boats) harvestX(x, id string) (int64, error) {
-	if x == "users" {
-		return site.harvestUser(id, true, nil)
-	}
-	return site.harvestBoat(id, 0, nil)
+func (site *Boats) harvestX(url, x, id string) (int64, error) {
+	return site.harvestBoat(url, id, 0, nil)
 }
 
 // var bsAnalyticsPattern = regexp.MustCompile(`<script>\n +analytics\.identify\("[^"]+", \{"initial_page_route":"/(boat-rentals|boats/\w+)"\}\);\n</script>`)
@@ -179,65 +183,101 @@ func (site *Boats) harvestX(x, id string) (int64, error) {
 // type bsSpecialPrice struct {
 // }
 
+func (site *Boats) FindModelInURL(url string) (make string, model string, err error) {
+	match := site.bsURL2ModelPattern.FindStringSubmatch(url)
+	if match == nil {
+		return "", "", errors.New("BadURL for Make/Model")
+	}
+	make = strings.Title(strings.ReplaceAll(match[2], "-", " "))
+	model = strings.Title(strings.ReplaceAll(match[3], "-", " "))
+	return make, model, nil
+}
+
 // harvestBoat will harvest the given boat (i.e., id=abcdefg), either from the harvest folder or from the website
-func (site *Boats) harvestBoat(bsBoatID string, userIDIfUnavailable int64, onlyGetUserInfo *api.User) (int64, error) {
-	if boatID, ok := bsBoatMap[bsBoatID]; ok && onlyGetUserInfo == nil {
+func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable int64, onlyGetUserInfo *api.User) (int64, error) {
+	if boatID, ok := site.bsBoatMap[bsBoatID]; ok && onlyGetUserInfo == nil {
 		// commentSQL("cached boat " + bsBoatID)
 		return boatID, nil
 	}
 	// commentSQL("starting boat " + bsBoatID)
-	url := "https://www.boatsetter.com/boats/" + bsBoatID
-	boat := api.Boat{URLs: []string{url}, Rental: &api.BoatRental{}}
-	boatFileWithoutExt := bsBaseDir + "boats/" + bsBoatID
+
+	filePath := site.bsBaseDir + "urls/" + bsBoatID + ".txt"
+	if url == "" {
+		fileData, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			return 0, err
+		}
+		url = string(fileData)
+	} else {
+		// store boat's url
+		ioutil.WriteFile(filePath, []byte(url), 0644)
+	}
+
+	boat := api.Boat{URLs: []string{url}, Sale: &api.BoatSale{}}
+	boatFileWithoutExt := site.bsBaseDir + "boats/" + bsBoatID
 	boatPage, err := getPage(boatFileWithoutExt+".htm", url)
 	if err != nil {
 		return 0, err
 	}
+
 	// see if this boat wasn't availble so it redirected to boat-rentals
-	available := boatPage.Find1ByRE(bsAnalyticsPattern, 1, "boat-rentals", "boat-rentals") != "boat-rentals"
-	if boatPage.Find0or1(nil, "//h1[text()='BLIMEY!']", "", "") == "BLIMEY!" {
-		available = false
-	}
-	userInfo := onlyGetUserInfo
-	if userInfo == nil {
-		userInfo = &api.User{}
-	}
-	if available {
-		// get user response rate and time
-		userInfo.RequestCount = 1000
-		userInfo.ResponseCount = 10 * boatPage.Int(changeIf("", "0", boatPage.Find1ByRE(bsResponseRatePattern, 1, "0", "0")), nil)
-		avgResponseSecs, _ := strconv.Atoi(changeIf("", "0", changeIf("min", "60", changeIf("hour", "3600", boatPage.Find1ByRE(bsAvgResponseTimePattern, 3, "", "")))))
-		if avgResponseSecs > 0 {
-			avgResponseSecs *= boatPage.Int(boatPage.Find1ByRE(bsAvgResponseTimePattern, 2, "", ""), nil)
-			if boatPage.Find1ByRE(bsAvgResponseTimePattern, 1, "", "") == "<" {
-				avgResponseSecs--
-			} else {
-				avgResponseSecs++
-			}
-		}
-		userInfo.ResponseSecSum = 1000 * avgResponseSecs
-	}
-	if onlyGetUserInfo != nil {
-		return 0, nil
-	}
+	available := true //:= boatPage.Find1ByRE(bsAnalyticsPattern, 1, "boat-rentals", "boat-rentals") != "boat-rentals"
+	// if boatPage.Find0or1(nil, "//h1[text()='BLIMEY!']", "", "") == "BLIMEY!" {
+	// 	available = false
+	// }
+	// userInfo := onlyGetUserInfo
+	// if userInfo == nil {
+	// 	userInfo = &api.User{}
+	// }
+	// if available {
+	// 	// get user response rate and time
+	// 	userInfo.RequestCount = 1000
+	// 	userInfo.ResponseCount = 10 * boatPage.Int(changeIf("", "0", boatPage.Find1ByRE(bsResponseRatePattern, 1, "0", "0")), nil)
+	// 	avgResponseSecs, _ := strconv.Atoi(changeIf("", "0", changeIf("min", "60", changeIf("hour", "3600", boatPage.Find1ByRE(bsAvgResponseTimePattern, 3, "", "")))))
+	// 	if avgResponseSecs > 0 {
+	// 		avgResponseSecs *= boatPage.Int(boatPage.Find1ByRE(bsAvgResponseTimePattern, 2, "", ""), nil)
+	// 		if boatPage.Find1ByRE(bsAvgResponseTimePattern, 1, "", "") == "<" {
+	// 			avgResponseSecs--
+	// 		} else {
+	// 			avgResponseSecs++
+	// 		}
+	// 	}
+	// 	userInfo.ResponseSecSum = 1000 * avgResponseSecs
+	// }
+	// if onlyGetUserInfo != nil {
+	// 	return 0, nil
+	// }
+
 	// get UserID
 	if !available {
 		// it redirected to a boats list because boat is not currently available
 		boat.UserID = userIDIfUnavailable
 	} else {
-		bsUserID := strings.TrimPrefix(boatPage.Find1(nil, "//a[text()='View profile']/@href", "", ""), "/users/")
-		userID, err := site.harvestUser(bsUserID, true, userInfo)
-		if err != nil {
-			return 0, err
-		}
-		boat.UserID = userID
+		// bsUserID := strings.TrimPrefix(boatPage.Find1(nil, "//a[text()='View profile']/@href", "", ""), "/users/")
+		// userID, err := site.harvestUser(bsUserID, true, userInfo)
+		// if err != nil {
+		// 	return 0, err
+		// }
+		// boat.UserID = userID
+		boat.UserID = userIDIfUnavailable
+
 		// get boat info
 		fieldXPath := func(name string) string {
-			return `//p[@class='u-sm-flex u-sm-flexJustifyBetween'][span[text()='` + name + `']]/span[@class='u-textBold u-ml1 u-sm-textRight']`
+			// return `//p[@class='u-sm-flex u-sm-flexJustifyBetween'][span[text()='` + name + `']]/span[@class='u-textBold u-ml1 u-sm-textRight']`
+			return `//div[@class='description-list__row'][dt[text()='` + name + `']]/dd[@class='description-list__description']`
 		}
 		boat.Year = boatPage.Int(boatPage.Find1(nil, fieldXPath("Year"), "0", "0"), nil)
-		boat.Make = boatPage.Find0or1(nil, fieldXPath("Manufacturer"), "", "")
+		boat.Make = boatPage.Find0or1(nil, fieldXPath("Make"), "", "")
 		boat.Model = boatPage.Find0or1(nil, fieldXPath("Model"), "", "")
+		if boat.Make == "" {
+			make, model, err := site.FindModelInURL(url)
+			if err != nil {
+				return 0, nil
+			}
+			boat.Make = make
+			boat.Model = model
+		}
+
 		make := api.LookupMake(boat.Year, 0, 0, boat.Make) // TODO
 		if make != nil {
 			boat.MakeID = make.ID
@@ -246,8 +286,11 @@ func (site *Boats) harvestBoat(bsBoatID string, userIDIfUnavailable int64, onlyG
 				break
 			}
 		}
-		category := boatPage.Find1(nil, fieldXPath("Boat type"), "", "")
+		category := boatPage.Find1(nil, fieldXPath("Class"), "", "")
 		if category != "" {
+			if category == "Kayak" {
+				category = "Canoe/Kayak"
+			}
 			_, cats := api.Enums(api.Boat{}, "Category")
 			for code, label := range cats {
 				if strings.ToUpper(category) == strings.ToUpper(label) {
@@ -258,61 +301,64 @@ func (site *Boats) harvestBoat(bsBoatID string, userIDIfUnavailable int64, onlyG
 				boatPage.Warn("BadCategory \"" + category + "\"")
 			}
 		}
-		boat.Length = float32(boatPage.Int(boatPage.Find1(nil, fieldXPath("Length"), "0", "0"), nil))
-		boat.Passengers = boatPage.Int(boatPage.Find1(nil, fieldXPath("Passenger capacity"), "Up to 0 people", "Up to 0 people"), bsBoatPassengersPattern)
-		boat.Sleeps = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Sleeps"), "0", "0"), nil)
-		boat.Rooms = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Staterooms"), "0", "0"), nil)
+		// TEMP: TBD
+		// boat.Length = boatPage.Find1(nil, fieldXPath("Length"), "0", "0")
+		// boat.Passengers = boatPage.Int(boatPage.Find1(nil, fieldXPath("Passenger capacity"), "Up to 0 people", "Up to 0 people"), bsBoatPassengersPattern)
+		// boat.Sleeps = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Sleeps"), "0", "0"), nil)
+		// boat.Rooms = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Staterooms"), "0", "0"), nil)
 		if api.StringInArray(bsBoatID, boatsByFilters["power"]) {
 			boat.Locomotion = "Power"
 		} else if api.StringInArray(bsBoatID, boatsByFilters["sail"]) {
 			boat.Locomotion = "Sail"
+		} else if api.StringInArray(bsBoatID, boatsByFilters["unpowered"]) {
+			boat.Locomotion = "Unpowered"
 		} else {
 			boat.Locomotion = "Power"
 			// boatPage.Warn("BadLocomotion")
 		}
-		boat.EngineCount = boatPage.Int(changeIf("", "0", boatPage.Find0or1(nil, fieldXPath("Number of engines"), "0", "0")), nil)
-		boat.EnginePower = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Horsepower"), "0 hp", "0 hp"), bsBoatHorsepowerPattern)
-		boat.Location = &api.Contact{
-			Type: "Address",
-			Location: api.LatLng(
-				boatPage.Float64(boatPage.Find1ByRE(bsBoatLocationPattern, 1, "0", "0"), nil),
-				boatPage.Float64(boatPage.Find1ByRE(bsBoatLocationPattern, 2, "0", "0"), nil)),
-		}
-		keyInfos := boatPage.FindN(nil, `//h3[@class='u-fsBase u-textSemiBold']`, 3, 4, "", "")
-		for keyInfoIndex, keyInfo := range keyInfos {
-			// usually it will be citystate, optionally instant bookable, captain, passengers
-			if keyInfoIndex == 0 {
-				match := bsBoatCityPattern.FindStringSubmatch(keyInfo)
-				if match != nil {
-					boat.Location.City = match[1]
-					boat.Location.State = match[2]
-					boat.Location.Country = "US"
-				} else {
-					// TODO: call Google API for something like "Cancún, QROO"
-					// TODO: boatPage.Warn("BadCityState \"" + keyInfo + "\"")
-				}
-			} else if keyInfo == "Instant bookable" {
-				boat.Rental.InstantBook = true
-			}
-		}
-		features := boatPage.FindN(nil, "//div[@data-remodal-id='js-modal-features']/div/div/div[@class='u-textRegular']", 0, 99999, "", "")
-		if features[0] != "" {
-			boat.Amenities = []string{}
-			_, amenities := api.Enums(api.Boat{}, "Amenities")
-			for _, feature := range features {
-				found := false
-				for code, label := range amenities {
-					if strings.ToUpper(feature) == strings.ToUpper(label) {
-						boat.Amenities = append(boat.Amenities, code)
-						found = true
-					}
-				}
-				if !found {
-					boatPage.Warn("BadAmenity: " + feature)
-				}
-			}
-			sort.Strings(boat.Amenities)
-		}
+		boat.EngineCount = boatPage.Int(changeIf("", "0", boatPage.Find0or1(nil, fieldXPath("Number of Engines"), "0", "0")), nil)
+		boat.EnginePower = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Power"), "0 hp", "0 hp"), bsBoatHorsepowerPattern)
+		// boat.Location = &api.Contact{
+		// 	Type: "Address",
+		// 	Location: api.LatLng(
+		// 		boatPage.Float64(boatPage.Find1ByRE(bsBoatLocationPattern, 1, "0", "0"), nil),
+		// 		boatPage.Float64(boatPage.Find1ByRE(bsBoatLocationPattern, 2, "0", "0"), nil)),
+		// }
+		// keyInfos := boatPage.FindN(nil, `//h3[@class='u-fsBase u-textSemiBold']`, 3, 4, "", "")
+		// for keyInfoIndex, keyInfo := range keyInfos {
+		// 	// usually it will be citystate, optionally instant bookable, captain, passengers
+		// 	if keyInfoIndex == 0 {
+		// 		match := bsBoatCityPattern.FindStringSubmatch(keyInfo)
+		// 		if match != nil {
+		// 			boat.Location.City = match[1]
+		// 			boat.Location.State = match[2]
+		// 			boat.Location.Country = "US"
+		// 		} else {
+		// 			// TODO: call Google API for something like "Cancún, QROO"
+		// 			// TODO: boatPage.Warn("BadCityState \"" + keyInfo + "\"")
+		// 		}
+		// 	} else if keyInfo == "Instant bookable" {
+		// 		boat.Rental.InstantBook = true
+		// 	}
+		// }
+		// features := boatPage.FindN(nil, "//div[@data-remodal-id='js-modal-features']/div/div/div[@class='u-textRegular']", 0, 99999, "", "")
+		// if features[0] != "" {
+		// 	boat.Amenities = []string{}
+		// 	_, amenities := api.Enums(api.Boat{}, "Amenities")
+		// 	for _, feature := range features {
+		// 		found := false
+		// 		for code, label := range amenities {
+		// 			if strings.ToUpper(feature) == strings.ToUpper(label) {
+		// 				boat.Amenities = append(boat.Amenities, code)
+		// 				found = true
+		// 			}
+		// 		}
+		// 		if !found {
+		// 			boatPage.Warn("BadAmenity: " + feature)
+		// 		}
+		// 	}
+		// 	sort.Strings(boat.Amenities)
+		// }
 		boat.Activities = []string{}
 		for _, filter := range []string{"fishing", "celebrating", "sailing", "watersports", "cruising"} {
 			if api.StringInArray(bsBoatID, boatsByFilters[filter]) {
@@ -425,7 +471,7 @@ func (site *Boats) harvestBoat(bsBoatID string, userIDIfUnavailable int64, onlyG
 	boatJSON, _ := json.Marshal(boat)
 	ioutil.WriteFile(boatFileWithoutExt+".json", boatJSON, 0644)
 	boatPage.SaveWarnings(boatFileWithoutExt + ".txt")
-	bsBoatMap[bsBoatID] = boatID
+	site.bsBoatMap[bsBoatID] = boatID
 	// commentSQL("caching boat " + bsBoatID)
 	return boatID, nil
 }
@@ -443,7 +489,7 @@ func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBo
 	// commentSQL("starting user " + bsUserID)
 	url := "https://www.boatsetter.com/users/" + bsUserID
 	user := api.User{URLs: []string{url}}
-	userFileWithoutExt := bsBaseDir + "users/" + bsUserID
+	userFileWithoutExt := site.bsBaseDir + "users/" + bsUserID
 	userPage, err := getPage(userFileWithoutExt+".htm", url)
 	if err != nil {
 		return 0, err
@@ -482,10 +528,10 @@ func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBo
 		boatHrefs := userPage.FindN(nil, "//a[@class='u-textGrayDark']/@href", 0, 99999, "", "")
 		for _, href := range boatHrefs {
 			if href != "" {
-				match := bsURLPattern.FindStringSubmatch(href)
+				match := site.bsURLPattern.FindStringSubmatch(href)
 				if match == nil || match[1] != "boats" {
 					userPage.Warn("BadBoatURL")
-				} else if _, err := site.harvestBoat(match[2], 0, userInfoFromBoat); err != nil {
+				} else if _, err := site.harvestBoat(href, match[2], 0, userInfoFromBoat); err != nil {
 					return 0, err
 				}
 				break
@@ -522,10 +568,10 @@ func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBo
 	boatHrefs := userPage.FindN(nil, "//a[@class='u-textGrayDark']/@href", 0, 99999, "", "")
 	for _, href := range boatHrefs {
 		if href != "" {
-			match := bsURLPattern.FindStringSubmatch(href)
+			match := site.bsURLPattern.FindStringSubmatch(href)
 			if match == nil || match[1] != "boats" {
 				userPage.Warn("BadBoatURL")
-			} else if _, err := site.harvestBoat(match[2], userID, nil); err != nil {
+			} else if _, err := site.harvestBoat(href, match[2], userID, nil); err != nil {
 				return userID, err
 			}
 		}
@@ -554,7 +600,7 @@ func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBo
 			if !strings.HasPrefix(hrefs[1], "/boats/") {
 				userPage.Warn("BadReviewBoat " + strconv.Itoa(reviewIndex))
 			} else {
-				reviewBoatID, err := site.harvestBoat(strings.TrimPrefix(hrefs[1], "/boats/"), userID, nil)
+				reviewBoatID, err := site.harvestBoat(hrefs[1], strings.TrimPrefix(hrefs[1], "/boats/"), userID, nil)
 				if err != nil {
 					return userID, err
 				}
@@ -592,8 +638,8 @@ func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBo
 				userPage.Warn(fmt.Sprintf("SetDeal: %v", resp))
 			}
 		} else {
-			dealID = nextDealID
-			nextDealID++
+			dealID = site.nextDealID
+			site.nextDealID++
 		}
 		event.DealID = dealID
 		if site.StoreData {

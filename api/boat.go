@@ -43,7 +43,7 @@ type Boat struct {
 	Heads              int               `json:",omitempty" datastore:",omitempty,noindex"`
 	FreshWaterCapacity int               `json:",omitempty" datastore:",omitempty,noindex"`
 	GrayWaterCapacity  int               `json:",omitempty" datastore:",omitempty,noindex"`
-	Locomotion         string            `json:",omitempty" datastore:",omitempty,noindex" enum:"Power, Sail"`
+	Locomotion         string            `json:",omitempty" datastore:",omitempty,noindex" enum:"Power, Sail, Unpowered"`
 	CruisingSpeed      float32           `json:",omitempty" datastore:",omitempty,noindex"`
 	TopSpeed           float32           `json:",omitempty" datastore:",omitempty,noindex"`
 	EngineCount        int               `json:",omitempty" datastore:",omitempty,noindex"`
@@ -59,7 +59,7 @@ type Boat struct {
 	Images             []Image           `json:",omitempty" datastore:",omitempty,noindex" qa:"-"`
 	LocationType       string            `json:",omitempty" datastore:",omitempty,noindex" enum:"Unknown, Marina Slip, Marina Dry Storage, Marina Rack Storage, Marina Mooring, Residence Trailer, Residence Slip, Residence Mooring, Storage Facility, Storage Trailer"`
 	Location           *Contact          `json:",omitempty" datastore:",omitempty"`
-	Activities         []string          `json:",omitempty" datastore:",omitempty,noindex" enum:"Fishing, Celebrating, Sailing, Watersports, Cruising"`
+	Activities         []string          `json:",omitempty" datastore:",omitempty,noindex" enum:"Fishing, Celebrating, Sailing, Watersports, Cruising, PWC"`
 	Amenities          []string          `json:",omitempty" datastore:",omitempty,noindex" enum:"Air Conditioning, Anchor, Anchor Windlass, Autopilot, Bathroom, Bimini Top, Bluetooth Audio, Bow Thruster, Chart Plotter, Child Life Jackets, Cooler/Ice Chest, Deck Shower, Depth Finder, Fish Finder, Fishing Gear, Floating Island, Floating Mat, Galley, GPS, Grill, Head, Inflatable Toys, Jet Ski, Kayaks, Live Aboard Allowed, Livewell/Baitwell, Microwave, Paddleboards, Pets Allowed, Radar, Refrigerator, Rod Holders, Seabob, Shower, Sink, Smoking Allowed, Snokeling Gear, Sonar, Stereo, Stereo Aux Input, Suitable for Meetings, Swim Ladder, Tender, Trolling Motor, Tubes Inflatables, TV/DVD, VHF Radio, Wakeboard, Wakeboard Tower, Waterskis, Wifi"`
 	Ownership          string            `json:",omitempty" datastore:",omitempty,noindex" enum:"Own, Lease"`
 	OriginalOwner      bool              `json:",omitempty" datastore:",omitempty,noindex"`

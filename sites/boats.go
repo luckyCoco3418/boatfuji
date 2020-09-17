@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,7 @@ type Boats struct {
 	bsBaseDir          string
 	bsURLPattern       *regexp.Regexp
 	bsURL2ModelPattern *regexp.Regexp
+	bsLengthPatter     *regexp.Regexp
 
 	// bsUserMap map[string]int64 // from id like "abcdefg" to UserID
 	bsBoatMap map[string]int64 // from id like "abcdefg" to BoatID
@@ -46,6 +48,8 @@ func (site *Boats) init() {
 	site.bsBaseDir = "harvest/www.boats.com/"
 	site.bsURLPattern = regexp.MustCompile(`^https://www\.boats\.com/(boats|power-boats|sailing-boats|unpowered)/.*-(\w+)\/$`)
 	site.bsURL2ModelPattern = regexp.MustCompile(`^https://www\.boats\.com/(boats)/(.*)/(.*)-\w+\/$`)
+	site.bsLengthPatter = regexp.MustCompile(`([0-9]+) ft( ([0-9]+) in)?`)
+
 	site.bsBoatMap = map[string]int64{}
 
 	site.nextDealID = 1
@@ -92,7 +96,10 @@ func (site *Boats) Harvest(url string) error {
 	}
 	if url == site.bsBaseURL {
 		boatsByFilters = map[string][]string{}
-		for _, filter := range []string{"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered", "&activity=pwc"} {
+		for _, filter := range []string{
+			"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered",
+			"&activity=overnight-cruising", "&activity=day-cruising", "&activity=watersports", "&activity=freshwater-fishing", "&activity=saltwater-fishing", "&activity=sailing", "&activity=pwc", "",
+		} {
 			// TEMP for page := 1; page < 99999; page++ {
 			for page := 1; page < 10; page++ {
 				boatsPage, err := getPage(site.bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+filter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+filter)
@@ -191,6 +198,40 @@ func (site *Boats) FindModelInURL(url string) (make string, model string, err er
 	make = strings.Title(strings.ReplaceAll(match[2], "-", " "))
 	model = strings.Title(strings.ReplaceAll(match[3], "-", " "))
 	return make, model, nil
+}
+
+func Feet(s string, re *regexp.Regexp) (float64, error) {
+	feetStr := s
+	inchStr := "0"
+	if re != nil {
+		match := re.FindStringSubmatch(s)
+		if match == nil {
+			err := fmt.Errorf("NeedFeetString \"%s\" %s", s, re.String())
+			return 0, err
+		}
+		if len(match) > 1 {
+			feetStr = match[1]
+		}
+		if len(match) > 3 {
+			inchStr = match[3]
+		}
+	}
+	feet, err := strconv.ParseFloat(feetStr, 64)
+	if err != nil {
+		err = fmt.Errorf("NeedFloat64 \"%s\"", feetStr)
+		return 0, err
+	}
+	inch, err := strconv.ParseFloat(inchStr, 64)
+	if err != nil {
+		err = fmt.Errorf("NeedFloat64 \"%s\"", inchStr)
+		inch = 0
+	}
+	return Round(feet+(inch/12), 6), err
+}
+
+func Round(num float64, precision int) float64 {
+	output := math.Pow(10, float64(precision))
+	return float64(math.Round(num*output)) / output
 }
 
 // harvestBoat will harvest the given boat (i.e., id=abcdefg), either from the harvest folder or from the website
@@ -301,8 +342,13 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 				boatPage.Warn("BadCategory \"" + category + "\"")
 			}
 		}
-		// TEMP: TBD
-		// boat.Length = boatPage.Find1(nil, fieldXPath("Length"), "0", "0")
+		// length of boat
+		length, err := Feet(boatPage.Find1(nil, fieldXPath("Length"), "0", "0"), site.bsLengthPatter)
+		if err != nil {
+			boatPage.Warn(err.Error())
+		}
+		boat.Length = float32(length)
+
 		// boat.Passengers = boatPage.Int(boatPage.Find1(nil, fieldXPath("Passenger capacity"), "Up to 0 people", "Up to 0 people"), bsBoatPassengersPattern)
 		// boat.Sleeps = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Sleeps"), "0", "0"), nil)
 		// boat.Rooms = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Staterooms"), "0", "0"), nil)
@@ -318,6 +364,15 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 		}
 		boat.EngineCount = boatPage.Int(changeIf("", "0", boatPage.Find0or1(nil, fieldXPath("Number of Engines"), "0", "0")), nil)
 		boat.EnginePower = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Power"), "0 hp", "0 hp"), bsBoatHorsepowerPattern)
+		boat.FuelType = boatPage.Find0or1(nil, fieldXPath("Fuel Type"), "", "")
+		boat.HullMaterials = boatPage.FindN(nil, fieldXPath("Hull Material"), 0, 99999, "", "")
+
+		draft, err := Feet(boatPage.Find1(nil, fieldXPath("Max Draft"), "0", "0"), site.bsLengthPatter)
+		if err != nil {
+			boatPage.Warn(err.Error())
+		}
+		boat.Draft = float32(draft)
+
 		// boat.Location = &api.Contact{
 		// 	Type: "Address",
 		// 	Location: api.LatLng(
@@ -360,98 +415,112 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 		// 	sort.Strings(boat.Amenities)
 		// }
 		boat.Activities = []string{}
-		for _, filter := range []string{"fishing", "celebrating", "sailing", "watersports", "cruising"} {
+		for _, filter := range []string{"overnight-cruising", "day-cruising", "watersports", "freshwater-fishing", "saltwater-fishing", "sailing", "pwc"} {
 			if api.StringInArray(bsBoatID, boatsByFilters[filter]) {
-				boat.Activities = append(boat.Activities, strings.Title(filter))
+				var activity string
+				if strings.HasSuffix(filter, "cruising") {
+					activity = "Cruising"
+				} else if strings.HasSuffix(filter, "fishing") {
+					activity = "Fishing"
+				} else if strings.EqualFold(filter, "pwc") {
+					activity = "PWC"
+				} else {
+					activity = strings.Title(filter)
+				}
+				boat.Activities = append(boat.Activities, activity)
 			}
 		}
 		sort.Strings(boat.Activities)
 		// get boat images
-		imageURLs := boatPage.FindN(nil, "//a[@data-fresco-group='boat-photos']/@href", 0, 99999, "", "")
-		images := []api.Image{}
-		for _, imageURL := range imageURLs {
-			if imageURL != "" {
-				image := boatPage.Image(imageURL, 600, 400, removeBSWatermark)
-				if image != nil {
-					images = append(images, *image)
-				}
-			}
-		}
-		if len(images) > 0 {
-			boat.Images = images
-		}
-		// get rental info
-		boat.Rental.ListingTitle = boatPage.Find1(nil, "//h1", "", "")
-		boat.Rental.ListingDescription = strings.TrimSpace(boatPage.Find1(nil, "//div[@class='u-mb1 js-show-more-content']", "", ""))
-		boat.Rental.ListingSummary = "" // TODO
-		boat.Rental.Rules = ""          // TODO
-		boat.Rental.CancelPolicy = boatPage.Find0or1(nil, "//div[h3[text()='Cancellation policy']]/div", "Moderate", "Moderate")
-		// count reviews and stars
-		reviewStars := boatPage.FindN(nil, "//div[@data-remodal-id='js-modal-reviews']//span[@class='u-hiddenVisually']", 0, 99999, "", "")
-		for _, stars := range reviewStars {
-			if strings.HasSuffix(stars, "/5 stars") {
-				rating, _ := strconv.Atoi(strings.TrimSuffix(stars, "/5 stars"))
-				boat.Rental.ReviewCount++
-				boat.Rental.ReviewRatingSum += rating
-			} else if stars != "" {
-				boatPage.Warn("BadReviewStars " + stars)
-			}
-		}
-		// get boat packages and pricing
-		rentalPricing := []api.BoatRentalPricing{}
-		packagesJSON := boatPage.Find1ByRE(bsBoatPackagesPattern, 1, "[]", "[]")
-		packages := []bsPackage{}
-		if err := json.Unmarshal([]byte(packagesJSON), &packages); err != nil {
-			boatPage.Warn("BadPackages: " + packagesJSON)
-		}
-		for _, pkg := range packages {
-			for _, price := range pkg.Prices {
-				captain := "NoCaptain"
-				if pkg.Type == "captained" {
-					if price.CaptainPrice == "0.00" {
-						captain = "CaptainIncluded"
-					} else {
-						captain = "CaptainExtra"
+		imageListNodes := boatPage.FindNodes("//div[@class='carousel'][//ul[@class='main']]")
+		if len(imageListNodes) > 0 {
+			imageURLs := boatPage.FindN(imageListNodes[0], "//li/@data-src_w0", 0, 99999, "", "")
+			images := []api.Image{}
+			for _, imageURL := range imageURLs {
+				if imageURL != "" {
+					image := boatPage.Image(imageURL, 600, 400, removeBSWatermark)
+					if image != nil {
+						images = append(images, *image)
 					}
 				}
-				rentalPricingIndex := -1
-				for i, item := range rentalPricing {
-					if item.Captain == captain {
-						rentalPricingIndex = i
-					}
-				}
-				if rentalPricingIndex == -1 {
-					rentalPricingIndex = len(rentalPricing)
-					rentalPricing = append(rentalPricing, api.BoatRentalPricing{
-						Captain: captain,
-					})
-				}
-				boatPrice, _ := strconv.ParseFloat(price.BoatPrice, 32)
-				switch price.Duration {
-				case "all_day":
-					rentalPricing[rentalPricingIndex].DailyPrice = float32(boatPrice)
-				case "half_day":
-					rentalPricing[rentalPricingIndex].HalfDailyPrice = float32(boatPrice)
-				default:
-					boatPage.Warn("BadDuration: " + price.Duration)
-				}
-				switch price.FuelPolicy {
-				case "owner", "owner pays", "owner_pays":
-					rentalPricing[rentalPricingIndex].FuelPayer = "owner"
-				case "renter", "renter pays", "renter_pays":
-					rentalPricing[rentalPricingIndex].FuelPayer = "renter"
-				default:
-					// boatPage.Warn("BadFuelPolicy: " + price.FuelPolicy)
-				}
+			}
+			if len(images) > 0 {
+				boat.Images = images
 			}
 		}
-		boat.Rental.Seasons = []api.BoatRentalSeason{
-			{
-				StartDay: api.Date(2000, 1, 1),
-				EndDay:   api.Date(2000, 12, 31),
-				Pricing:  rentalPricing,
-			},
-		}
+		// // get rental info
+		// boat.Rental.ListingTitle = boatPage.Find1(nil, "//h1", "", "")
+		// boat.Rental.ListingDescription = strings.TrimSpace(boatPage.Find1(nil, "//div[@class='u-mb1 js-show-more-content']", "", ""))
+		// boat.Rental.ListingSummary = "" // TODO
+		// boat.Rental.Rules = ""          // TODO
+		// boat.Rental.CancelPolicy = boatPage.Find0or1(nil, "//div[h3[text()='Cancellation policy']]/div", "Moderate", "Moderate")
+		// // count reviews and stars
+		// reviewStars := boatPage.FindN(nil, "//div[@data-remodal-id='js-modal-reviews']//span[@class='u-hiddenVisually']", 0, 99999, "", "")
+		// for _, stars := range reviewStars {
+		// 	if strings.HasSuffix(stars, "/5 stars") {
+		// 		rating, _ := strconv.Atoi(strings.TrimSuffix(stars, "/5 stars"))
+		// 		boat.Rental.ReviewCount++
+		// 		boat.Rental.ReviewRatingSum += rating
+		// 	} else if stars != "" {
+		// 		boatPage.Warn("BadReviewStars " + stars)
+		// 	}
+		// }
+
+		// // get boat packages and pricing
+		// rentalPricing := []api.BoatRentalPricing{}
+		// packagesJSON := boatPage.Find1ByRE(bsBoatPackagesPattern, 1, "[]", "[]")
+		// packages := []bsPackage{}
+		// if err := json.Unmarshal([]byte(packagesJSON), &packages); err != nil {
+		// 	boatPage.Warn("BadPackages: " + packagesJSON)
+		// }
+		// for _, pkg := range packages {
+		// 	for _, price := range pkg.Prices {
+		// 		captain := "NoCaptain"
+		// 		if pkg.Type == "captained" {
+		// 			if price.CaptainPrice == "0.00" {
+		// 				captain = "CaptainIncluded"
+		// 			} else {
+		// 				captain = "CaptainExtra"
+		// 			}
+		// 		}
+		// 		rentalPricingIndex := -1
+		// 		for i, item := range rentalPricing {
+		// 			if item.Captain == captain {
+		// 				rentalPricingIndex = i
+		// 			}
+		// 		}
+		// 		if rentalPricingIndex == -1 {
+		// 			rentalPricingIndex = len(rentalPricing)
+		// 			rentalPricing = append(rentalPricing, api.BoatRentalPricing{
+		// 				Captain: captain,
+		// 			})
+		// 		}
+		// 		boatPrice, _ := strconv.ParseFloat(price.BoatPrice, 32)
+		// 		switch price.Duration {
+		// 		case "all_day":
+		// 			rentalPricing[rentalPricingIndex].DailyPrice = float32(boatPrice)
+		// 		case "half_day":
+		// 			rentalPricing[rentalPricingIndex].HalfDailyPrice = float32(boatPrice)
+		// 		default:
+		// 			boatPage.Warn("BadDuration: " + price.Duration)
+		// 		}
+		// 		switch price.FuelPolicy {
+		// 		case "owner", "owner pays", "owner_pays":
+		// 			rentalPricing[rentalPricingIndex].FuelPayer = "owner"
+		// 		case "renter", "renter pays", "renter_pays":
+		// 			rentalPricing[rentalPricingIndex].FuelPayer = "renter"
+		// 		default:
+		// 			// boatPage.Warn("BadFuelPolicy: " + price.FuelPolicy)
+		// 		}
+		// 	}
+		// }
+		// boat.Rental.Seasons = []api.BoatRentalSeason{
+		// 	{
+		// 		StartDay: api.Date(2000, 1, 1),
+		// 		EndDay:   api.Date(2000, 12, 31),
+		// 		Pricing:  rentalPricing,
+		// 	},
+		// }
 	}
 	// save record and warnings
 	var boatID int64

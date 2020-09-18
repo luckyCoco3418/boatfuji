@@ -41,8 +41,8 @@ type Boat struct {
 	Sleeps             int               `json:",omitempty" datastore:",omitempty,noindex"`
 	Rooms              int               `json:",omitempty" datastore:",omitempty,noindex"`
 	Heads              int               `json:",omitempty" datastore:",omitempty,noindex"`
-	FreshWaterCapacity int               `json:",omitempty" datastore:",omitempty,noindex"`
-	GrayWaterCapacity  int               `json:",omitempty" datastore:",omitempty,noindex"`
+	FreshWaterCapacity float32           `json:",omitempty" datastore:",omitempty,noindex"`
+	GrayWaterCapacity  float32           `json:",omitempty" datastore:",omitempty,noindex"`
 	Locomotion         string            `json:",omitempty" datastore:",omitempty,noindex" enum:"Power, Sail, Unpowered"`
 	CruisingSpeed      float32           `json:",omitempty" datastore:",omitempty,noindex"`
 	TopSpeed           float32           `json:",omitempty" datastore:",omitempty,noindex"`
@@ -52,7 +52,7 @@ type Boat struct {
 	EngineMake         string            `json:",omitempty" datastore:",omitempty,noindex"`
 	EngineModel        string            `json:",omitempty" datastore:",omitempty,noindex"`
 	FuelType           string            `json:",omitempty" datastore:",omitempty,noindex" enum:"Unknown, Gas, Diesel, Electric, Other"`
-	FuelCapacity       int               `json:",omitempty" datastore:",omitempty,noindex"`
+	FuelCapacity       float32           `json:",omitempty" datastore:",omitempty,noindex"`
 	FuelConsumption    int               `json:",omitempty" datastore:",omitempty,noindex"`
 	FuelCost           float32           `json:",omitempty" datastore:",omitempty,noindex"`
 	Trailer            BoatTrailer       `json:",omitempty" datastore:",omitempty,noindex"`

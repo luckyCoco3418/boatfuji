@@ -154,8 +154,8 @@ func (site *Boats) harvestX(url, x, id string) (int64, error) {
 // var bsBoatCityPattern = regexp.MustCompile(`^([^,]*), (\w{2})?$`)
 // var bsBoatLocationPattern = regexp.MustCompile(`var evergage_boatLatitude = "([^"]+)";\n *var evergage_boatLongitude = "([^"]+)";`)
 // var bsBoatPackagesPattern = regexp.MustCompile(`packages: (.*?),\n`)
-var bsTankCapacityPattern = regexp.MustCompile(`^(\d+) gal`)
-var bsLbWeightPattern = regexp.MustCompile(`^(\d+) lb`)
+var bsTankCapacityPattern = regexp.MustCompile(`^([\d.]+) gal`)
+var bsLbWeightPattern = regexp.MustCompile(`^([\d.]+) lb`)
 
 // type bsPackage struct {
 // 	ID              int       `json:"id"`
@@ -238,7 +238,11 @@ func Round(num float64, precision int) float64 {
 }
 
 func (site *Boats) getLength(boatPage *page, expr string) float64 {
-	length, err := Feet(boatPage.Find1(nil, expr, "0", "0"), site.bsLengthPatter)
+	lengthStr := boatPage.Find1(nil, expr, "", "")
+	if lengthStr == "" {
+		return 0
+	}
+	length, err := Feet(lengthStr, site.bsLengthPatter)
 	if err != nil {
 		boatPage.Warn(err.Error())
 	}
@@ -318,8 +322,7 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 			if x == "boats" {
 				return `//div[@class='description-list__row'][dt[text()='` + name + `']]/dd[@class='description-list__description']`
 			}
-			// return `//section[@class='boat-info'][th[text()='` + name + `']]/td`
-			return `//tr[th[text()='` + name + `']]/td`
+			return `//tr[th[contains(text(),'` + name + `')]]/td`
 		}
 		boat.Year = boatPage.Int(boatPage.Find1(nil, fieldXPath(x, "Year"), "0", "0"), nil)
 		boat.Make = boatPage.Find0or1(nil, fieldXPath(x, "Make"), "", "")
@@ -327,6 +330,7 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		if boat.Make == "" {
 			make, model, err := site.FindModelInURL(url)
 			if err != nil {
+				boatPage.Warn("BadMake \"" + url + "\"")
 				return 0, nil
 			}
 			boat.Make = make
@@ -371,7 +375,10 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		}
 
 		boat.Length = float32(site.getLength(boatPage, fieldXPath(x, "Length")))
-		// boat.Passengers = boatPage.Int(boatPage.Find1(nil, fieldXPath("Passenger capacity"), "Up to 0 people", "Up to 0 people"), bsBoatPassengersPattern)
+		passengers := boatPage.Find0or1(nil, fieldXPath(x, "Max Passengers"), "", "")
+		if passengers != "" {
+			boat.Passengers = boatPage.Int(passengers, nil)
+		}
 		// boat.Sleeps = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Sleeps"), "0", "0"), nil)
 		// boat.Rooms = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Staterooms"), "0", "0"), nil)
 		if api.StringInArray(bsBoatID, boatsByFilters["power"]) {
@@ -390,29 +397,24 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		boat.Weight = float32(boatPage.Float64(boatPage.Find0or1(nil, fieldXPath(x, "Dry Weight"), "0 lb", "0 lb"), bsLbWeightPattern))
 		boat.BridgeClearance = float32(site.getLength(boatPage, fieldXPath(x, "Max Bridge Clearance")))
 
-		enginePowers := boatPage.FindN(nil, fieldXPath(x, "Power"), 0, 99, "0 hp", "0 hp")
-		if len(enginePowers) > 0 {
+		enginePowers := boatPage.FindN(nil, fieldXPath(x, "Power"), 0, 99, "", "")
+		if enginePowers[0] != "" {
 			boat.EnginePower = boatPage.Int(enginePowers[0], bsBoatHorsepowerPattern)
 		}
-		engineMakes := boatPage.FindN(nil, fieldXPath(x, "Engine Make"), 0, 99, "", "")
-		if len(engineMakes) > 0 {
-			boat.EngineMake = engineMakes[0]
-		}
-		engineModels := boatPage.FindN(nil, fieldXPath(x, "Engine Model"), 0, 99, "", "")
-		if len(engineModels) > 0 {
-			boat.EngineModel = engineModels[0]
-		}
-		fuleTypes := boatPage.FindN(nil, fieldXPath(x, "Fuel Type"), 0, 99, "", "")
-		if len(fuleTypes) > 0 {
-			boat.FuelType = fuleTypes[0]
-		}
-		boat.FuelCapacity = boatPage.Int(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fuel Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern)
-		boat.FreshWaterCapacity = boatPage.Int(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fresh Water Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern)
-		boat.GrayWaterCapacity = boatPage.Int(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Holding Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern)
 		boat.EngineCount = boatPage.Int(changeIf("", "0", boatPage.Find0or1(nil, fieldXPath(x, "Number of Engines"), "0", "0")), nil)
-		if boat.EngineCount == 0 {
+		if (boat.EngineCount == 0) && (enginePowers[0] != "") {
 			boat.EngineCount = len(enginePowers)
 		}
+		engineMakes := boatPage.FindN(nil, fieldXPath(x, "Engine Make"), 0, 99, "", "")
+		boat.EngineMake = engineMakes[0]
+		engineModels := boatPage.FindN(nil, fieldXPath(x, "Engine Model"), 0, 99, "", "")
+		boat.EngineModel = engineModels[0]
+
+		fuleTypes := boatPage.FindN(nil, fieldXPath(x, "Fuel Type"), 0, 99, "", "")
+		boat.FuelType = fuleTypes[0]
+		boat.FuelCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fuel Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
+		boat.FreshWaterCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fresh Water Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
+		boat.GrayWaterCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Holding Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
 
 		description := ""
 		loa := float32(site.getLength(boatPage, fieldXPath(x, "LOA")))
@@ -432,7 +434,7 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 			description = description + fmt.Sprintf("%s:%s\n", "Mainsail Area", ma)
 		}
 		engineTypes := boatPage.FindN(nil, fieldXPath(x, "Engine Type"), 0, 99, "", "")
-		if len(engineTypes) > 0 {
+		if engineTypes[0] != "" {
 			description = description + fmt.Sprintf("%s:%s\n", "Engine Type", engineTypes[0])
 		}
 		hs := boatPage.Find0or1(nil, fieldXPath(x, "Hull Shape"), "", "")

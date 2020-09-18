@@ -67,7 +67,8 @@ func (site *Boats) Harvest(url string) error {
 	}
 	os.MkdirAll(site.bsBaseDir+"boats-for-sale", 0755)
 	os.MkdirAll(site.bsBaseDir+"boats", 0755)
-	os.MkdirAll(site.bsBaseDir+"urls", 0755)
+	os.MkdirAll(site.bsBaseDir+"urls", 0755) // store urls of boat
+	os.MkdirAll("www/i", 0755)               // store images of boat
 	// os.MkdirAll(site.bsBaseDir+"users", 0755)
 	if url == "" {
 		// loop through users and boats folders
@@ -142,7 +143,7 @@ func (site *Boats) Harvest(url string) error {
 }
 
 func (site *Boats) harvestX(url, x, id string) (int64, error) {
-	return site.harvestBoat(url, id, 0, nil)
+	return site.harvestBoat(url, x, id, 0, nil)
 }
 
 // var bsAnalyticsPattern = regexp.MustCompile(`<script>\n +analytics\.identify\("[^"]+", \{"initial_page_route":"/(boat-rentals|boats/\w+)"\}\);\n</script>`)
@@ -153,6 +154,8 @@ func (site *Boats) harvestX(url, x, id string) (int64, error) {
 // var bsBoatCityPattern = regexp.MustCompile(`^([^,]*), (\w{2})?$`)
 // var bsBoatLocationPattern = regexp.MustCompile(`var evergage_boatLatitude = "([^"]+)";\n *var evergage_boatLongitude = "([^"]+)";`)
 // var bsBoatPackagesPattern = regexp.MustCompile(`packages: (.*?),\n`)
+var bsTankCapacityPattern = regexp.MustCompile(`^(\d+) gal`)
+var bsLbWeightPattern = regexp.MustCompile(`^(\d+) lb`)
 
 // type bsPackage struct {
 // 	ID              int       `json:"id"`
@@ -234,8 +237,16 @@ func Round(num float64, precision int) float64 {
 	return float64(math.Round(num*output)) / output
 }
 
+func (site *Boats) getLength(boatPage *page, expr string) float64 {
+	length, err := Feet(boatPage.Find1(nil, expr, "0", "0"), site.bsLengthPatter)
+	if err != nil {
+		boatPage.Warn(err.Error())
+	}
+	return length
+}
+
 // harvestBoat will harvest the given boat (i.e., id=abcdefg), either from the harvest folder or from the website
-func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable int64, onlyGetUserInfo *api.User) (int64, error) {
+func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int64, onlyGetUserInfo *api.User) (int64, error) {
 	if boatID, ok := site.bsBoatMap[bsBoatID]; ok && onlyGetUserInfo == nil {
 		// commentSQL("cached boat " + bsBoatID)
 		return boatID, nil
@@ -303,13 +314,16 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 		boat.UserID = userIDIfUnavailable
 
 		// get boat info
-		fieldXPath := func(name string) string {
-			// return `//p[@class='u-sm-flex u-sm-flexJustifyBetween'][span[text()='` + name + `']]/span[@class='u-textBold u-ml1 u-sm-textRight']`
-			return `//div[@class='description-list__row'][dt[text()='` + name + `']]/dd[@class='description-list__description']`
+		fieldXPath := func(x, name string) string {
+			if x == "boats" {
+				return `//div[@class='description-list__row'][dt[text()='` + name + `']]/dd[@class='description-list__description']`
+			}
+			// return `//section[@class='boat-info'][th[text()='` + name + `']]/td`
+			return `//tr[th[text()='` + name + `']]/td`
 		}
-		boat.Year = boatPage.Int(boatPage.Find1(nil, fieldXPath("Year"), "0", "0"), nil)
-		boat.Make = boatPage.Find0or1(nil, fieldXPath("Make"), "", "")
-		boat.Model = boatPage.Find0or1(nil, fieldXPath("Model"), "", "")
+		boat.Year = boatPage.Int(boatPage.Find1(nil, fieldXPath(x, "Year"), "0", "0"), nil)
+		boat.Make = boatPage.Find0or1(nil, fieldXPath(x, "Make"), "", "")
+		boat.Model = boatPage.Find0or1(nil, fieldXPath(x, "Model"), "", "")
 		if boat.Make == "" {
 			make, model, err := site.FindModelInURL(url)
 			if err != nil {
@@ -327,7 +341,7 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 				break
 			}
 		}
-		category := boatPage.Find1(nil, fieldXPath("Class"), "", "")
+		category := boatPage.Find1(nil, fieldXPath(x, "Class"), "", "")
 		if category != "" {
 			if category == "Kayak" {
 				category = "Canoe/Kayak"
@@ -342,13 +356,21 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 				boatPage.Warn("BadCategory \"" + category + "\"")
 			}
 		}
-		// length of boat
-		length, err := Feet(boatPage.Find1(nil, fieldXPath("Length"), "0", "0"), site.bsLengthPatter)
-		if err != nil {
-			boatPage.Warn(err.Error())
+		condition := boatPage.Find1(nil, fieldXPath(x, "Condition"), "", "")
+		if condition != "" {
+			_, cond := api.Enums(api.Boat{}, "Condition")
+			for code, label := range cond {
+				if strings.ToUpper(condition) == strings.ToUpper(label) {
+					boat.Condition = code
+					break
+				}
+			}
+			if boat.Condition == "" {
+				boatPage.Warn("BadCondition \"" + condition + "\"")
+			}
 		}
-		boat.Length = float32(length)
 
+		boat.Length = float32(site.getLength(boatPage, fieldXPath(x, "Length")))
 		// boat.Passengers = boatPage.Int(boatPage.Find1(nil, fieldXPath("Passenger capacity"), "Up to 0 people", "Up to 0 people"), bsBoatPassengersPattern)
 		// boat.Sleeps = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Sleeps"), "0", "0"), nil)
 		// boat.Rooms = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Staterooms"), "0", "0"), nil)
@@ -362,23 +384,74 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 			boat.Locomotion = "Power"
 			// boatPage.Warn("BadLocomotion")
 		}
-		boat.EngineCount = boatPage.Int(changeIf("", "0", boatPage.Find0or1(nil, fieldXPath("Number of Engines"), "0", "0")), nil)
-		boat.EnginePower = boatPage.Int(boatPage.Find0or1(nil, fieldXPath("Power"), "0 hp", "0 hp"), bsBoatHorsepowerPattern)
-		boat.FuelType = boatPage.Find0or1(nil, fieldXPath("Fuel Type"), "", "")
-		boat.HullMaterials = boatPage.FindN(nil, fieldXPath("Hull Material"), 0, 99999, "", "")
+		boat.HullMaterials = boatPage.FindN(nil, fieldXPath(x, "Hull Material"), 0, 99, "", "")
+		boat.Beam = float32(site.getLength(boatPage, fieldXPath(x, "Beam")))
+		boat.Draft = float32(site.getLength(boatPage, fieldXPath(x, "Max Draft")))
+		boat.Weight = float32(boatPage.Float64(boatPage.Find0or1(nil, fieldXPath(x, "Dry Weight"), "0 lb", "0 lb"), bsLbWeightPattern))
+		boat.BridgeClearance = float32(site.getLength(boatPage, fieldXPath(x, "Max Bridge Clearance")))
 
-		draft, err := Feet(boatPage.Find1(nil, fieldXPath("Max Draft"), "0", "0"), site.bsLengthPatter)
-		if err != nil {
-			boatPage.Warn(err.Error())
+		enginePowers := boatPage.FindN(nil, fieldXPath(x, "Power"), 0, 99, "0 hp", "0 hp")
+		if len(enginePowers) > 0 {
+			boat.EnginePower = boatPage.Int(enginePowers[0], bsBoatHorsepowerPattern)
 		}
-		boat.Draft = float32(draft)
+		engineMakes := boatPage.FindN(nil, fieldXPath(x, "Engine Make"), 0, 99, "", "")
+		if len(engineMakes) > 0 {
+			boat.EngineMake = engineMakes[0]
+		}
+		engineModels := boatPage.FindN(nil, fieldXPath(x, "Engine Model"), 0, 99, "", "")
+		if len(engineModels) > 0 {
+			boat.EngineModel = engineModels[0]
+		}
+		fuleTypes := boatPage.FindN(nil, fieldXPath(x, "Fuel Type"), 0, 99, "", "")
+		if len(fuleTypes) > 0 {
+			boat.FuelType = fuleTypes[0]
+		}
+		boat.FuelCapacity = boatPage.Int(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fuel Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern)
+		boat.FreshWaterCapacity = boatPage.Int(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fresh Water Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern)
+		boat.GrayWaterCapacity = boatPage.Int(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Holding Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern)
+		boat.EngineCount = boatPage.Int(changeIf("", "0", boatPage.Find0or1(nil, fieldXPath(x, "Number of Engines"), "0", "0")), nil)
+		if boat.EngineCount == 0 {
+			boat.EngineCount = len(enginePowers)
+		}
 
-		// boat.Location = &api.Contact{
-		// 	Type: "Address",
-		// 	Location: api.LatLng(
-		// 		boatPage.Float64(boatPage.Find1ByRE(bsBoatLocationPattern, 1, "0", "0"), nil),
-		// 		boatPage.Float64(boatPage.Find1ByRE(bsBoatLocationPattern, 2, "0", "0"), nil)),
-		// }
+		description := ""
+		loa := float32(site.getLength(boatPage, fieldXPath(x, "LOA")))
+		if loa > 0 {
+			description = description + fmt.Sprintf("%s:%f\n", "LOA", loa)
+		}
+		lwl := float32(site.getLength(boatPage, fieldXPath(x, "Length at Water Line")))
+		if lwl > 0 {
+			description = description + fmt.Sprintf("%s:%f\n", "Length at Water Line", lwl)
+		}
+		dat := boatPage.Find0or1(nil, fieldXPath(x, "Deadrise at Transom"), "", "")
+		if dat != "" {
+			description = description + fmt.Sprintf("%s:%s\n", "Deadrise at Transom", dat)
+		}
+		ma := boatPage.Find0or1(nil, fieldXPath(x, "Mainsail Area"), "", "")
+		if ma != "" {
+			description = description + fmt.Sprintf("%s:%s\n", "Mainsail Area", ma)
+		}
+		engineTypes := boatPage.FindN(nil, fieldXPath(x, "Engine Type"), 0, 99, "", "")
+		if len(engineTypes) > 0 {
+			description = description + fmt.Sprintf("%s:%s\n", "Engine Type", engineTypes[0])
+		}
+		hs := boatPage.Find0or1(nil, fieldXPath(x, "Hull Shape"), "", "")
+		if hs != "" {
+			description = description + fmt.Sprintf("%s:%s\n", "Hull Shape", hs)
+		}
+		lifeStyle := boatPage.Find0or1(nil, fieldXPath(x, "Lifestyle"), "", "")
+		if lifeStyle != "" {
+			description = description + fmt.Sprintf("%s:%s\n", "Lifestyle", lifeStyle)
+		}
+		boat.Sale.ListingDescription = description
+
+		location := boatPage.Find0or1(nil, fieldXPath(x, "Location"), "", "")
+		if location != "" {
+			boat.Location = &api.Contact{
+				Type:  "Address",
+				Line1: location,
+			}
+		}
 		// keyInfos := boatPage.FindN(nil, `//h3[@class='u-fsBase u-textSemiBold']`, 3, 4, "", "")
 		// for keyInfoIndex, keyInfo := range keyInfos {
 		// 	// usually it will be citystate, optionally instant bookable, captain, passengers
@@ -438,7 +511,7 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 			images := []api.Image{}
 			for _, imageURL := range imageURLs {
 				if imageURL != "" {
-					image := boatPage.Image(imageURL, 600, 400, removeBSWatermark)
+					image := boatPage.Image(imageURL, 600, 400, nil)
 					if image != nil {
 						images = append(images, *image)
 					}
@@ -531,7 +604,7 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 			boatPage.Warn(fmt.Sprintf("SetBoat: %v", resp))
 		}
 	} else {
-		boatID = codeToInt64(bsBoatID)
+		boatID, _ = strconv.ParseInt(bsBoatID, 10, 64)
 	}
 	boat.ID = boatID
 	if site.WriteSQL {
@@ -549,207 +622,3 @@ func (site *Boats) harvestBoat(url string, bsBoatID string, userIDIfUnavailable 
 // var bsUserCityPattern = regexp.MustCompile(`^From ([^,]*), (\w{2})?$`)
 // var bsReviewCtPattern = regexp.MustCompile(`^\n(\d+) reviews?\n$`)
 // var bsDatePattern = regexp.MustCompile(`^(\w{3})\. (\d\d)(st|nd|rd|th)$`)
-
-func (site *Boats) harvestUser(bsUserID string, harvestDeep bool, userInfoFromBoat *api.User) (int64, error) {
-	if userID, ok := bsUserMap[bsUserID]; ok {
-		// commentSQL("cached user " + bsUserID)
-		return userID, nil
-	}
-	// commentSQL("starting user " + bsUserID)
-	url := "https://www.boatsetter.com/users/" + bsUserID
-	user := api.User{URLs: []string{url}}
-	userFileWithoutExt := site.bsBaseDir + "users/" + bsUserID
-	userPage, err := getPage(userFileWithoutExt+".htm", url)
-	if err != nil {
-		return 0, err
-	}
-	// harvest name, description, start year, city, and profile image
-	user.GivenName = strings.TrimSpace(userPage.Find1(nil, "//h1", "Missing", "Ambiguous"))
-	details := userPage.FindN(nil, "//div[@class='Panel Panel--arrowTopLeft']/p", 2, 3, "", "")
-	if strings.HasPrefix(details[0], `“`) && strings.HasSuffix(details[0], `”`) {
-		user.Description = strings.Trim(details[0], `“”`)
-	} else if !strings.HasSuffix(details[0], "hasn't completed their profile yet.") {
-		userPage.Warn("NeedDescription: " + details[0])
-	}
-	if len(details) > 1 {
-		match := bsAboardSincePattern.FindStringSubmatch(details[1])
-		if match == nil {
-			userPage.Warn("NeedCreated: " + details[1])
-		} else {
-			year, _ := strconv.Atoi(match[1])
-			user.Audit = &api.Audit{Created: api.Date(year, 1, 1)}
-		}
-	}
-	if len(details) > 2 {
-		match := bsUserCityPattern.FindStringSubmatch(details[2])
-		if match == nil {
-			userPage.Warn("NeedCityState: " + details[2])
-		} else if match[1] != "" || match[2] != "" {
-			user.Contacts = []api.Contact{{Type: "Address", City: match[1], State: match[2]}}
-		}
-	}
-	image := userPage.Image(userPage.Find1(nil, "//span[@class='UserPic UserPic--lg UserPic--withBorder']/@style", "", ""), 200, 200, nil)
-	if image != nil {
-		user.Images = []api.Image{*image}
-	}
-	if userInfoFromBoat == nil {
-		userInfoFromBoat = &api.User{}
-		boatHrefs := userPage.FindN(nil, "//a[@class='u-textGrayDark']/@href", 0, 99999, "", "")
-		for _, href := range boatHrefs {
-			if href != "" {
-				match := site.bsURLPattern.FindStringSubmatch(href)
-				if match == nil || match[1] != "boats" {
-					userPage.Warn("BadBoatURL")
-				} else if _, err := site.harvestBoat(href, match[2], 0, userInfoFromBoat); err != nil {
-					return 0, err
-				}
-				break
-			}
-		}
-	}
-	user.RequestCount = userInfoFromBoat.RequestCount
-	user.ResponseCount = userInfoFromBoat.ResponseCount
-	user.ResponseSecSum = userInfoFromBoat.ResponseSecSum
-	// save record
-	var userID int64
-	if site.StoreData {
-		resp := api.SetUser(&api.Request{Session: &api.Session{IsGod: true}, User: &user}, nil)
-		userID = resp.ID
-		if userID == 0 {
-			userPage.Warn(fmt.Sprintf("SetUser: %v", resp))
-		}
-	} else {
-		userID = codeToInt64(bsUserID)
-	}
-	user.ID = userID
-	if site.WriteSQL {
-		writeUserSQL(&user)
-	}
-	userJSON, _ := json.Marshal(user)
-	ioutil.WriteFile(userFileWithoutExt+".json", userJSON, 0644)
-	bsUserMap[bsUserID] = userID
-	if !harvestDeep {
-		// commentSQL("caching user " + bsUserID + " but not going deep")
-		return userID, nil
-	}
-	// commentSQL("caching user " + bsUserID + " and going deep")
-	// harvest boats
-	boatHrefs := userPage.FindN(nil, "//a[@class='u-textGrayDark']/@href", 0, 99999, "", "")
-	for _, href := range boatHrefs {
-		if href != "" {
-			match := site.bsURLPattern.FindStringSubmatch(href)
-			if match == nil || match[1] != "boats" {
-				userPage.Warn("BadBoatURL")
-			} else if _, err := site.harvestBoat(href, match[2], userID, nil); err != nil {
-				return userID, err
-			}
-		}
-	}
-	// harvest reviews
-	reviewNodes := userPage.FindNodes("//div[@class='Arrange-sizeFill'][div[@class='Arrange']]")
-	deals := make(map[int64]api.Deal, len(reviewNodes))
-	events := make(map[int64]api.Event, len(reviewNodes))
-	reviewsWithBoats := 0
-	for reviewIndex, reviewNode := range reviewNodes {
-		deal := api.Deal{UserID: userID, Rental: &api.EventRental{Status: "Booked"}}
-		event := api.Event{UserID: userID, Review: &api.EventReview{}}
-		// there are actually 3 <a href>, but the first two are identical so they are combined by html
-		// if boat was deleted, then only 1
-		hrefs := userPage.FindN(reviewNode, "//a/@href", 1, 2, "", "")
-		if !strings.HasPrefix(hrefs[0], "/users/") {
-			userPage.Warn("BadReviewUser " + strconv.Itoa(reviewIndex))
-		} else {
-			reviewUserID, err := site.harvestUser(strings.TrimPrefix(hrefs[0], "/users/"), harvestDeep, nil)
-			if err != nil {
-				return userID, err
-			}
-			event.FromUserID = reviewUserID
-		}
-		if len(hrefs) > 1 {
-			if !strings.HasPrefix(hrefs[1], "/boats/") {
-				userPage.Warn("BadReviewBoat " + strconv.Itoa(reviewIndex))
-			} else {
-				reviewBoatID, err := site.harvestBoat(hrefs[1], strings.TrimPrefix(hrefs[1], "/boats/"), userID, nil)
-				if err != nil {
-					return userID, err
-				}
-				deal.BoatID = reviewBoatID
-				event.BoatID = reviewBoatID
-				reviewsWithBoats++
-			}
-		}
-		stars := userPage.Find1(reviewNode, "//span[@class='u-hiddenVisually']", "", "")
-		if strings.HasSuffix(stars, "/5 stars") {
-			rating, _ := strconv.Atoi(strings.TrimSuffix(stars, "/5 stars"))
-			event.Review.Rating = rating
-		} else {
-			userPage.Warn("BadReviewStars " + strconv.Itoa(reviewIndex))
-		}
-		dateString := userPage.Find1(reviewNode, "//div[@class='u-fsSm u-textSemiBold']", "Missing", "TooMany")
-		if dateString != "" {
-			match := bsDatePattern.FindStringSubmatch(dateString)
-			if match == nil {
-				userPage.Warn("BadReviewDate " + strconv.Itoa(reviewIndex) + ": \"" + dateString + "\"")
-			} else {
-				month := strings.Index("   JanFebMarAprMayJunJulAugSepOctNovDec", match[1]) / 3
-				day, _ := strconv.Atoi(strings.TrimLeft(match[2], "0"))
-				date := api.Date(1970, month, day)
-				deal.Rental.Start = date
-				deal.Rental.End = date
-			}
-		}
-		event.Review.Text = strings.Join(userPage.FindN(reviewNode, "//div[@class='u-fsSm u-textGrayMedium']/p", 0, 99999, "", ""), "\n")
-		var dealID, eventID int64
-		if site.StoreData {
-			resp := api.SetDeal(&api.Request{Session: &api.Session{IsGod: true}, Deal: &deal}, nil)
-			dealID = resp.ID
-			if dealID == 0 {
-				userPage.Warn(fmt.Sprintf("SetDeal: %v", resp))
-			}
-		} else {
-			dealID = site.nextDealID
-			site.nextDealID++
-		}
-		event.DealID = dealID
-		if site.StoreData {
-			resp := api.SetEvent(&api.Request{Session: &api.Session{IsGod: true}, Event: &event}, nil)
-			eventID = resp.ID
-			if eventID == 0 {
-				userPage.Warn(fmt.Sprintf("SetEvent: %v", resp))
-			}
-		} else {
-			eventID = dealID
-		}
-		deals[dealID] = deal
-		events[eventID] = event
-		event.Deal = &deal
-	}
-	reviewCtString := userPage.Find1(nil, "//span[@class='u-lg-sizeFull u-fsSm u-textSemiBold']", "", "")
-	match := bsReviewCtPattern.FindStringSubmatch(reviewCtString)
-	if match == nil {
-		userPage.Warn("BadReviewCt")
-	} else {
-		reviewCt, _ := strconv.Atoi(match[1])
-		if reviewCt != reviewsWithBoats && reviewCt != len(reviewNodes) {
-			userPage.Warn("WrongReviewCt")
-		}
-	}
-	if site.WriteSQL {
-		writeReviewsSQL(events)
-	}
-	if len(deals) == 0 {
-		os.Remove(userFileWithoutExt + "_deals.json")
-	} else {
-		dealsJSON, _ := json.Marshal(deals)
-		ioutil.WriteFile(userFileWithoutExt+"_deals.json", dealsJSON, 0644)
-	}
-	if len(events) == 0 {
-		os.Remove(userFileWithoutExt + "_events.json")
-	} else {
-		eventsJSON, _ := json.Marshal(events)
-		ioutil.WriteFile(userFileWithoutExt+"_events.json", eventsJSON, 0644)
-	}
-	// save warnings
-	userPage.SaveWarnings(userFileWithoutExt + ".txt")
-	return userID, nil
-}

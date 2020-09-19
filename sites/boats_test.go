@@ -4,7 +4,7 @@ import (
 	"log"
 	"testing"
 
-	"../api"
+	"boatfuji.com/api"
 )
 
 func TestBoats(t *testing.T) {
@@ -20,8 +20,8 @@ func TestBoats(t *testing.T) {
 	// err := site.Harvest("")
 	// err := site.Harvest("https://www.boats.com/")
 
-	err := site.Harvest("https://www.boats.com/boats/ocean-alexander/45-divergence-coupe-7586270/")
-	// err := site.Harvest("https://www.boats.com/power-boats/2020-ocean-alexander-45-divergence-coupe-7431757/"")
+	// err := site.Harvest("https://www.boats.com/boats/ocean-alexander/45-divergence-coupe-7586270/")
+	// err := site.Harvest("https://www.boats.com/power-boats/2020-ocean-alexander-45-divergence-coupe-7431757/")
 	// err := site.Harvest("https://www.boats.com/power-boats/2021-yamaha-waverunner-fx-cruiser-ho-7562361/")
 	// err := site.Harvest("https://www.boats.com/sailing-boats/2021-sunreef-50-7561964/")
 	// err := site.Harvest("https://www.boats.com/unpowered/2020-ascend-133x-sit-on-titanium-7463469/")

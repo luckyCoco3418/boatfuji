@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"../api"
+	"boatfuji.com/api"
 )
 
 func init() {
@@ -68,7 +68,7 @@ func (site *Boats) Harvest(url string) error {
 	os.MkdirAll(site.bsBaseDir+"boats-for-sale", 0755)
 	os.MkdirAll(site.bsBaseDir+"boats", 0755)
 	os.MkdirAll(site.bsBaseDir+"urls", 0755) // store urls of boat
-	os.MkdirAll("www/i", 0755)               // store images of boat
+	// os.MkdirAll("www/i", 0755)               // store images of boat
 	// os.MkdirAll(site.bsBaseDir+"users", 0755)
 
 	if url == "" {
@@ -102,8 +102,7 @@ func (site *Boats) Harvest(url string) error {
 			"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered",
 			"&activity=overnight-cruising", "&activity=day-cruising", "&activity=watersports", "&activity=freshwater-fishing", "&activity=saltwater-fishing", "&activity=sailing", "&activity=pwc", "",
 		} {
-			// TEMP for page := 1; page < 99999; page++ {
-			for page := 1; page < 10; page++ {
+			for page := 1; page < 99999; page++ {
 				boatsPage, err := getPage(site.bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+filter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+filter)
 				if err != nil {
 					return err
@@ -243,6 +242,8 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 	}
 
 	{
+		description := ""
+
 		boat.UserID = userIDIfUnavailable
 
 		// get boat info
@@ -275,9 +276,26 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		}
 		category := boatPage.Find1(nil, fieldXPath(x, "Class"), "", "")
 		if category != "" {
+			categories := strings.Split(category, ",")
+			if len(categories) > 1 {
+				description = description + fmt.Sprintf("%s:%s\n", "Class", category)
+			}
+			category = strings.TrimSpace(categories[0])
+
 			if category == "Kayak" {
 				category = "Canoe/Kayak"
+			} else if category == "Cruiser (Power)" {
+				category = "Cruiser"
+			} else if category == "Pilothouse (Power)" {
+				category = "Pilothouse"
+			} else if category == "Aluminum Fish" {
+				category = "Aluminum Fishing"
+			} else if category == "Sport Fishing" {
+				category = "Sports Fishing"
+			} else if category == "Bowrider" {
+				category = "Bow Rider"
 			}
+
 			_, cats := api.Enums(api.Boat{}, "Category")
 			for code, label := range cats {
 				if strings.ToUpper(category) == strings.ToUpper(label) {
@@ -343,7 +361,6 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		boat.FreshWaterCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fresh Water Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
 		boat.GrayWaterCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Holding Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
 
-		description := ""
 		loa := float32(site.getLength(boatPage, fieldXPath(x, "LOA")))
 		if loa > 0 {
 			description = description + fmt.Sprintf("%s:%f\n", "LOA", loa)

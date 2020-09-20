@@ -110,7 +110,7 @@ func (site *Boats) Harvest(url string) error {
 				if boatsPage.Find1(nil, "//strong[ends-with(text(),'Boats Available')]", "0", "0") == "0" {
 					break
 				}
-				bsBoatIDs := boatsPage.FindN(nil, "//li/@data-reporting-impression-product-id", 0, 99999, "", "")
+				bsBoatIDs := boatsPage.FindN(nil, "//a/@data-reporting-click-product-id", 0, 99999, "", "")
 				if filter != "" {
 					filtersKey := strings.Split(filter, "=")[1]
 					if page == 1 {
@@ -121,7 +121,7 @@ func (site *Boats) Harvest(url string) error {
 					continue
 				}
 
-				bsBoatURLs := boatsPage.FindN(nil, "//a[@data-reporting-click-listing-type='enhanced listing']/@href", 0, 99999, "", "")
+				bsBoatURLs := boatsPage.FindN(nil, "//a[@data-reporting-click-product-id]/@href", 0, 99999, "", "")
 				for _, bsBoatURL := range bsBoatURLs {
 					url := site.bsBaseURL + strings.TrimLeft(bsBoatURL, "/")
 					match := site.bsURLPattern.FindStringSubmatch(url)
@@ -130,6 +130,8 @@ func (site *Boats) Harvest(url string) error {
 						if err != nil {
 							return err
 						}
+					} else {
+						return errors.New("BadURL: " + url)
 					}
 				}
 			}
@@ -246,6 +248,20 @@ func (site *Boats) getCategory(category string) string {
 		category = "Rigid Inflatable"
 	} else if category == "Dinghy (Power)" {
 		category = "Dinghy"
+	} else if category == "Antique and Classic (Sail)" {
+		category = "Antique and Classic"
+	} else if category == "Pilothouse (Sail)" {
+		category = "Pilothouse"
+	} else if category == "Dive" {
+		category = "Dive Boat"
+	} else if category == "Commercial Boat (Power)" {
+		category = "Commercial"
+	} else if category == "Barge (Power)" {
+		category = "Barge"
+	} else if category == "Daysailer" {
+		category = "Daysailer & Weekender"
+	} else if category == "House Boat" {
+		category = "Houseboat"
 	}
 
 	return category
@@ -291,9 +307,9 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		// get boat info
 		fieldXPath := func(x, name string) string {
 			if x == "boats" {
-				return `//div[@class='description-list__row'][dt[text()='` + name + `']]/dd[@class='description-list__description']`
+				return `//div[@class='description-list__row'][dt[normalize-space(text())='` + name + `']]/dd[@class='description-list__description']`
 			}
-			return `//tr[th[contains(text(),'` + name + `')]]/td`
+			return `//tr[th[normalize-space(text())='` + name + `']]/td`
 		}
 		boat.Year = boatPage.Int(boatPage.Find1(nil, fieldXPath(x, "Year"), "0", "0"), nil)
 		boat.Make = boatPage.Find0or1(nil, fieldXPath(x, "Make"), "", "")

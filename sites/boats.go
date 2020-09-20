@@ -209,6 +209,48 @@ func (site *Boats) getLength(boatPage *page, expr string) float64 {
 	return length
 }
 
+func (site *Boats) getCategory(category string) string {
+	category = strings.TrimSpace(category)
+
+	if category == "Kayak" {
+		category = "Canoe/Kayak"
+	} else if category == "Cruiser (Power)" || category == "Cruiser (Sail)" {
+		category = "Cruiser"
+	} else if category == "Pilothouse (Power)" {
+		category = "Pilothouse"
+	} else if category == "Aluminum Fish" {
+		category = "Aluminum Fishing"
+	} else if category == "Sport Fishing" {
+		category = "Sports Fishing"
+	} else if category == "Bowrider" {
+		category = "Bow Rider"
+	} else if category == "Cruiser/Racer" {
+		category = "Cruiser Racer"
+	} else if category == "Tender (Power)" {
+		category = "Tender"
+	} else if category == "Bass" {
+		category = "Bass Boat"
+	} else if category == "Jon" {
+		category = "Jon Boat"
+	} else if category == "Bay" {
+		category = "Bay Boat"
+	} else if category == "Motorsailer (Power)" {
+		category = "Motorsailer"
+	} else if category == "Ski and Wakeboard Boat" {
+		category = "Ski and Wakeboard"
+	} else if category == "Jet" {
+		category = "Jet Boat"
+	} else if category == "Other (Sail)" || category == "Other (Power)" {
+		category = "Other"
+	} else if category == "Rigid Inflatable Boats (RIB)" {
+		category = "Rigid Inflatable"
+	} else if category == "Dinghy (Power)" {
+		category = "Dinghy"
+	}
+
+	return category
+}
+
 // harvestBoat will harvest the given boat (i.e., id=abcdefg), either from the harvest folder or from the website
 func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int64) (int64, error) {
 	if boatID, ok := site.bsBoatMap[bsBoatID]; ok {
@@ -280,21 +322,7 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 			if len(categories) > 1 {
 				description = description + fmt.Sprintf("%s:%s\n", "Class", category)
 			}
-			category = strings.TrimSpace(categories[0])
-
-			if category == "Kayak" {
-				category = "Canoe/Kayak"
-			} else if category == "Cruiser (Power)" {
-				category = "Cruiser"
-			} else if category == "Pilothouse (Power)" {
-				category = "Pilothouse"
-			} else if category == "Aluminum Fish" {
-				category = "Aluminum Fishing"
-			} else if category == "Sport Fishing" {
-				category = "Sports Fishing"
-			} else if category == "Bowrider" {
-				category = "Bow Rider"
-			}
+			category = site.getCategory(categories[0])
 
 			_, cats := api.Enums(api.Boat{}, "Category")
 			for code, label := range cats {

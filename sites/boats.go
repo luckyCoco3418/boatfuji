@@ -38,7 +38,7 @@ type Boats struct {
 	// bsUserMap map[string]int64 // from id like "abcdefg" to UserID
 	bsBoatMap map[string]int64 // from id like "abcdefg" to BoatID
 
-	boatsByFilters map[string][]string
+	boatsByFilters map[string]map[string]bool
 
 	nextDealID int64
 }
@@ -57,12 +57,20 @@ func (site *Boats) init() {
 
 // Harvest gets data from the site
 func (site *Boats) Harvest(url string) error {
-	boatsByFilters = map[string][]string{}
+	site.boatsByFilters = map[string]map[string]bool{}
 	filtersJSON, err := ioutil.ReadFile(site.bsBaseDir + "filters.json")
 	if err == nil {
-		err = json.Unmarshal(filtersJSON, &boatsByFilters)
+		bsByFilters := map[string][]string{}
+		err = json.Unmarshal(filtersJSON, &bsByFilters)
 		if err != nil {
 			return err
+		}
+		for filter, bsArray := range bsByFilters {
+			bsMap := map[string]bool{}
+			for _, bs := range bsArray {
+				bsMap[bs] = true
+			}
+			site.boatsByFilters[filter] = bsMap
 		}
 	}
 	os.MkdirAll(site.bsBaseDir+"boats-for-sale", 0755)
@@ -97,46 +105,73 @@ func (site *Boats) Harvest(url string) error {
 		return nil
 	}
 	if url == site.bsBaseURL {
-		boatsByFilters = map[string][]string{}
-		for _, filter := range []string{
-			"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered",
-			"&activity=overnight-cruising", "&activity=day-cruising", "&activity=watersports", "&activity=freshwater-fishing", "&activity=saltwater-fishing", "&activity=sailing", "&activity=pwc", "",
-		} {
-			for page := 1; page < 99999; page++ {
-				boatsPage, err := getPage(site.bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+filter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+filter)
-				if err != nil {
-					return err
-				}
-				if boatsPage.Find1(nil, "//strong[ends-with(text(),'Boats Available')]", "0", "0") == "0" {
-					break
-				}
-				bsBoatIDs := boatsPage.FindN(nil, "//a/@data-reporting-click-product-id", 0, 99999, "", "")
-				if filter != "" {
-					filtersKey := strings.Split(filter, "=")[1]
-					if page == 1 {
-						boatsByFilters[filtersKey] = bsBoatIDs
-					} else {
-						boatsByFilters[filtersKey] = append(boatsByFilters[filtersKey], bsBoatIDs...)
-					}
-					continue
-				}
+		site.boatsByFilters = map[string]map[string]bool{}
+		for _, typeFilter := range []string{"&boat-type=power", "&boat-type=sail", "&boat-type=unpowered", ""} {
+			for _, activityFilter := range []string{"&activity=overnight-cruising", "&activity=day-cruising", "&activity=watersports", "&activity=freshwater-fishing", "&activity=saltwater-fishing", "&activity=sailing", "&activity=pwc", ""} {
+				for _, classFilter := range []string{
+					"&class=power-aft", "&class=power-aluminum", "&class=power-antique", "&class=sail-antique", "&class=power-bass",
+					"&class=power-bay", "&class=sail-beachcat", "&class=power-bowrider", "&class=sail-catamaran", "&class=sail-centercockpit",
+					"&class=power-center", "&class=power-convertible", "&class=power-cruiser", "&class=sail-cruiser", "&class=sail-racercruiser",
+					"&class=power-cuddy", "&class=sail-day", "&class=power-deck", "&class=sail-deck", "&class=sail-dinghy",
+					"&class=unpowered-dinghy", "&class=power-downeast", "&class=power-dualconsole", "&class=power-expresscruiser", "&class=power-flats",
+					"&class=power-flybridge", "&class=power-highperf", "&class=power-house", "&class=power-inflatable", "&class=power-jet",
+					"&class=power-jon", "&class=unpowered-kayak", "&class=sail-ketch", "&class=power-mega", "&class=power-motor",
+					"&class=sail-motor", "&class=power-pwc", "&class=power-pilot", "&class=sail-pilot", "&class=power-pontoon",
+					"&class=power-pcatamaran", "&class=sail-racer", "&class=power-runabout", "&class=power-skiwake", "&class=power-skiff",
+					"&class=power-sportfish", "&class=power-sportcruiser", "&class=power-tender", "&class=power-trawler", "&class=sail-trimaran",
+					"&class=power-walk", "",
+				} {
 
-				bsBoatURLs := boatsPage.FindN(nil, "//a[@data-reporting-click-product-id]/@href", 0, 99999, "", "")
-				for _, bsBoatURL := range bsBoatURLs {
-					url := site.bsBaseURL + strings.TrimLeft(bsBoatURL, "/")
-					match := site.bsURLPattern.FindStringSubmatch(url)
-					if len(match) > 2 {
-						_, err = site.harvestBoat(url, match[1], match[2], 0)
+					for page := 1; page < 99999; page++ {
+						boatsPage, err := getPage(site.bsBaseDir+"boats-for-sale/"+strconv.Itoa(page)+typeFilter+activityFilter+classFilter+".htm", "https://www.boats.com/boats-for-sale/?page="+strconv.Itoa(page)+typeFilter+activityFilter+classFilter)
 						if err != nil {
 							return err
 						}
-					} else {
-						return errors.New("BadURL: " + url)
+						if boatsPage.Find1(nil, "//strong[ends-with(text(),'Boats Available')]", "0", "0") == "0" {
+							break
+						}
+						bsBoatIDs := boatsPage.FindN(nil, "//a/@data-reporting-click-product-id", 0, 99999, "", "")
+						for _, filter := range []string{typeFilter, activityFilter} {
+							if filter != "" {
+								filtersKey := strings.Split(filter, "=")[1]
+								if site.boatsByFilters[filtersKey] == nil {
+									site.boatsByFilters[filtersKey] = map[string]bool{}
+								}
+								bsMap := site.boatsByFilters[filtersKey]
+								for _, boatID := range bsBoatIDs {
+									bsMap[boatID] = true
+								}
+							}
+						}
+
+						bsBoatURLs := boatsPage.FindN(nil, "//a[@data-reporting-click-product-id]/@href", 0, 99999, "", "")
+						for _, bsBoatURL := range bsBoatURLs {
+							url := site.bsBaseURL + strings.TrimLeft(bsBoatURL, "/")
+							match := site.bsURLPattern.FindStringSubmatch(url)
+							if len(match) > 2 {
+								_, err = site.harvestBoat(url, match[1], match[2], 0)
+								if err != nil {
+									return err
+								}
+							} else {
+								return errors.New("BadURL: " + url)
+							}
+						}
 					}
+
 				}
 			}
 		}
-		filtersJSON, _ := json.Marshal(boatsByFilters)
+
+		bsByFilters := map[string][]string{}
+		for filter, bsMap := range site.boatsByFilters {
+			bsArray := []string{}
+			for boatID := range bsMap {
+				bsArray = append(bsArray, boatID)
+			}
+			bsByFilters[filter] = bsArray
+		}
+		filtersJSON, _ := json.Marshal(bsByFilters)
 		ioutil.WriteFile(site.bsBaseDir+"filters.json", filtersJSON, 0644)
 		return nil
 	}
@@ -150,6 +185,14 @@ func (site *Boats) Harvest(url string) error {
 
 func (site *Boats) harvestX(url, x, id string) (int64, error) {
 	return site.harvestBoat(url, x, id, 0)
+}
+
+func (site *Boats) boatInFilter(filter, boatID string) bool {
+	bsMap := site.boatsByFilters[filter]
+	if bsMap != nil {
+		return bsMap[boatID]
+	}
+	return false
 }
 
 var bsTankCapacityPattern = regexp.MustCompile(`^([\d.]+) gal`)
@@ -262,6 +305,14 @@ func (site *Boats) getCategory(category string) string {
 		category = "Daysailer & Weekender"
 	} else if category == "House Boat" {
 		category = "Houseboat"
+	} else if category == "Motorsailer (Sail)" {
+		category = "Motorsailer"
+	} else if category == "Antique and Classic (Power)" {
+		category = "Antique and Classic"
+	} else if category == "Gulet (Sail)" {
+		category = "Gulet"
+	} else if category == "Flats" {
+		category = "Flats Boat"
 	}
 
 	return category
@@ -362,6 +413,8 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 			if boat.Condition == "" {
 				boatPage.Warn("BadCondition \"" + condition + "\"")
 			}
+		} else {
+			boat.Condition = "New"
 		}
 
 		boat.Length = float32(site.getLength(boatPage, fieldXPath(x, "Length")))
@@ -370,11 +423,11 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 			boat.Passengers = boatPage.Int(passengers, nil)
 		}
 
-		if api.StringInArray(bsBoatID, boatsByFilters["power"]) {
+		if site.boatInFilter("power", bsBoatID) {
 			boat.Locomotion = "Power"
-		} else if api.StringInArray(bsBoatID, boatsByFilters["sail"]) {
+		} else if site.boatInFilter("sail", bsBoatID) {
 			boat.Locomotion = "Sail"
-		} else if api.StringInArray(bsBoatID, boatsByFilters["unpowered"]) {
+		} else if site.boatInFilter("unpowered", bsBoatID) {
 			boat.Locomotion = "Unpowered"
 		} else {
 			boat.Locomotion = "Power"
@@ -405,33 +458,33 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		boat.FreshWaterCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Fresh Water Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
 		boat.GrayWaterCapacity = float32(boatPage.Float64(strings.Trim(boatPage.Find0or1(nil, fieldXPath(x, "Holding Tanks"), "0 gal", "0 gal"), " \n"), bsTankCapacityPattern))
 
-		loa := float32(site.getLength(boatPage, fieldXPath(x, "LOA")))
-		if loa > 0 {
-			description = description + fmt.Sprintf("%s:%f\n", "LOA", loa)
+		loa := boatPage.Find0or1(nil, fieldXPath(x, "LOA"), "", "")
+		if loa != "" {
+			description = description + fmt.Sprintf("%s: %s\n", "LOA", loa)
 		}
-		lwl := float32(site.getLength(boatPage, fieldXPath(x, "Length at Water Line")))
-		if lwl > 0 {
-			description = description + fmt.Sprintf("%s:%f\n", "Length at Water Line", lwl)
+		lwl := boatPage.Find0or1(nil, fieldXPath(x, "Length at Water Line"), "", "")
+		if lwl != "" {
+			description = description + fmt.Sprintf("%s: %s\n", "Length at Water Line", lwl)
 		}
 		dat := boatPage.Find0or1(nil, fieldXPath(x, "Deadrise at Transom"), "", "")
 		if dat != "" {
-			description = description + fmt.Sprintf("%s:%s\n", "Deadrise at Transom", dat)
+			description = description + fmt.Sprintf("%s: %s\n", "Deadrise at Transom", dat)
 		}
 		ma := boatPage.Find0or1(nil, fieldXPath(x, "Mainsail Area"), "", "")
 		if ma != "" {
-			description = description + fmt.Sprintf("%s:%s\n", "Mainsail Area", ma)
+			description = description + fmt.Sprintf("%s: %s\n", "Mainsail Area", ma)
 		}
 		engineTypes := boatPage.FindN(nil, fieldXPath(x, "Engine Type"), 0, 99, "", "")
 		if engineTypes[0] != "" {
-			description = description + fmt.Sprintf("%s:%s\n", "Engine Type", engineTypes[0])
+			description = description + fmt.Sprintf("%s: %s\n", "Engine Type", engineTypes[0])
 		}
 		hs := boatPage.Find0or1(nil, fieldXPath(x, "Hull Shape"), "", "")
 		if hs != "" {
-			description = description + fmt.Sprintf("%s:%s\n", "Hull Shape", hs)
+			description = description + fmt.Sprintf("%s: %s\n", "Hull Shape", hs)
 		}
 		lifeStyle := boatPage.Find0or1(nil, fieldXPath(x, "Lifestyle"), "", "")
 		if lifeStyle != "" {
-			description = description + fmt.Sprintf("%s:%s\n", "Lifestyle", lifeStyle)
+			description = description + fmt.Sprintf("%s: %s\n", "Lifestyle", lifeStyle)
 		}
 		boat.Sale.ListingDescription = description
 
@@ -444,7 +497,7 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 		}
 		boat.Activities = []string{}
 		for _, filter := range []string{"overnight-cruising", "day-cruising", "watersports", "freshwater-fishing", "saltwater-fishing", "sailing", "pwc"} {
-			if api.StringInArray(bsBoatID, boatsByFilters[filter]) {
+			if site.boatInFilter(filter, bsBoatID) {
 				var activity string
 				if strings.HasSuffix(filter, "cruising") {
 					activity = "Cruising"

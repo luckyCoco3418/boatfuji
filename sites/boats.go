@@ -33,7 +33,8 @@ type Boats struct {
 	bsBaseDir          string
 	bsURLPattern       *regexp.Regexp
 	bsURL2ModelPattern *regexp.Regexp
-	bsLengthPatter     *regexp.Regexp
+	bsLengthPattern    *regexp.Regexp
+	bsURLPartyPattern  *regexp.Regexp
 
 	// bsUserMap map[string]int64 // from id like "abcdefg" to UserID
 	bsBoatMap map[string]int64 // from id like "abcdefg" to BoatID
@@ -48,7 +49,8 @@ func (site *Boats) init() {
 	site.bsBaseDir = "harvest/www.boats.com/"
 	site.bsURLPattern = regexp.MustCompile(`^https://www\.boats\.com/(boats|power-boats|sailing-boats|unpowered)/.*-(\w+)\/$`)
 	site.bsURL2ModelPattern = regexp.MustCompile(`^https://www\.boats\.com/(boats)/(.*)/(.*)-\w+\/$`)
-	site.bsLengthPatter = regexp.MustCompile(`([0-9]+) ft( ([0-9]+) in)?`)
+	site.bsLengthPattern = regexp.MustCompile(`([0-9]+) ft( ([0-9]+) in)?`)
+	site.bsURLPartyPattern = regexp.MustCompile(`.*\?party=(\w+)`)
 
 	site.bsBoatMap = map[string]int64{}
 
@@ -247,7 +249,7 @@ func (site *Boats) getLength(boatPage *page, expr string) float64 {
 	if lengthStr == "" {
 		return 0
 	}
-	length, err := Feet(lengthStr, site.bsLengthPatter)
+	length, err := Feet(lengthStr, site.bsLengthPattern)
 	if err != nil {
 		boatPage.Warn(err.Error())
 	}
@@ -487,6 +489,36 @@ func (site *Boats) harvestBoat(url, x, bsBoatID string, userIDIfUnavailable int6
 			description = description + fmt.Sprintf("%s: %s\n", "Lifestyle", lifeStyle)
 		}
 		boat.Sale.ListingDescription = description
+
+		// seller information
+		sellerArea := boatPage.FindNodes("//div[contains(@class, 'seller-manufacturer-info-area') and contains(@class, 'seller')]")
+		if len(sellerArea) > 1 {
+			seller := ""
+			sellerInfo := boatPage.Find0or1(sellerArea[0], "//div[@class='seller-info']/h3", "", "")
+			if sellerInfo != "" {
+				seller = seller + fmt.Sprintf("%s: %s\n", "Seller", strings.TrimSpace(sellerInfo))
+			}
+			sellerStreet := boatPage.Find0or1(sellerArea[0], "//div[@class='street']", "", "")
+			if sellerStreet != "" {
+				seller = seller + fmt.Sprintf("%s: %s\n", "Street", strings.TrimSpace(sellerStreet))
+			}
+			sellerCity := boatPage.Find0or1(sellerArea[0], "//div[@class='city']", "", "")
+			if sellerCity != "" {
+				seller = seller + fmt.Sprintf("%s: %s\n", "City", strings.TrimSpace(sellerCity))
+			}
+			sellerNumber := boatPage.Find0or1(sellerArea[0], "//div[@class='number']", "", "")
+			if sellerNumber != "" {
+				seller = seller + fmt.Sprintf("%s: %s\n", "City", strings.TrimSpace(sellerNumber))
+			}
+			partyURL := boatPage.Find0or1(sellerArea[0], "//a[@class='viewSellerInventory']/@href", "", "")
+			if partyURL != "" {
+				match := site.bsURLPartyPattern.FindStringSubmatch(partyURL)
+				if match != nil && len(match) > 1 {
+					seller = seller + fmt.Sprintf("%s: %s\n", "Party", match[1])
+				}
+			}
+			boat.Sale.ListingSummary = seller
+		}
 
 		location := boatPage.Find0or1(nil, fieldXPath(x, "Location"), "", "")
 		if location != "" {

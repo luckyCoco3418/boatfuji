@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"boatfuji.com/api"
-	"boatfuji.com/sites"
+	"./api"
+	"./sites"
 )
 
 func main() {

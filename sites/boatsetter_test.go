@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"boatfuji.com/api"
+	"../api"
 )
 
 func TestBoatsetter(t *testing.T) {

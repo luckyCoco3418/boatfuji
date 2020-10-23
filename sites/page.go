@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"boatfuji.com/api"
+	"../api"
 	"github.com/antchfx/htmlquery"
 	"golang.org/x/net/html"
 )

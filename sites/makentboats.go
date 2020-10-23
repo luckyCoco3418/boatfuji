@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"boatfuji.com/api"
+	"../api"
 )
 
 var makentMakes map[string]int = map[string]int{}

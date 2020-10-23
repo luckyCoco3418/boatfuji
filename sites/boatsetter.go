@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"boatfuji.com/api"
+	"../api"
 )
 
 var bsBaseURL = "https://www.boatsetter.com/"
